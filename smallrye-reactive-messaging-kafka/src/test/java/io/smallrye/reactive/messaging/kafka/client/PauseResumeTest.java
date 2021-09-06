@@ -237,8 +237,7 @@ public class PauseResumeTest extends WeldTestBase {
 
     }
 
-    @Test
-    @Disabled("See https://github.com/smallrye/smallrye-reactive-messaging/issues/1389")
+    @RepeatedTest(10)
     void testRebalanceDuringPausedWithDifferentPartitions() {
         MapBasedConfig config = commonConfiguration()
                 .with(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 10)
