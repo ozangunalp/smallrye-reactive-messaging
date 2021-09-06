@@ -6,6 +6,7 @@ on:
         branches:
             - main
             - 2.x
+            - flaky_pause_resume_test
         paths-ignore:
             - '.github/**'
 
