@@ -7,7 +7,6 @@ import java.util.concurrent.CompletionStage;
 
 import org.apache.kafka.common.TopicPartition;
 
-import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.kafka.IncomingKafkaRecord;
 
 public interface KafkaCommitHandler {
@@ -32,8 +31,8 @@ public interface KafkaCommitHandler {
 
     }
 
-    default <K, V> Uni<IncomingKafkaRecord<K, V>> received(IncomingKafkaRecord<K, V> record) {
-        return Uni.createFrom().item(record);
+    default <K, V> IncomingKafkaRecord<K, V> received(IncomingKafkaRecord<K, V> record) {
+        return record;
     }
 
     default void terminate(boolean graceful) {

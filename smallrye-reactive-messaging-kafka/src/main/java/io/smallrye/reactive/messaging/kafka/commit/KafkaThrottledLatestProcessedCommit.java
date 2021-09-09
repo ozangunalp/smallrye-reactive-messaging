@@ -10,7 +10,6 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 
-import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.tuples.Tuple2;
 import io.smallrye.reactive.messaging.kafka.IncomingKafkaRecord;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
@@ -110,6 +109,17 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
      */
     @Override
     public void partitionsAssigned(Collection<TopicPartition> partitions) {
+        HashSet<TopicPartition> partitionsWithoutOffset = new HashSet<>(partitions);
+        partitionsWithoutOffset.removeAll(offsetStores.keySet());
+        if (!partitionsWithoutOffset.isEmpty()) {
+            // We are on the polling thread
+            Map<TopicPartition, OffsetAndMetadata> committed = consumer.unwrap().committed(partitionsWithoutOffset);
+            for (TopicPartition tp : partitionsWithoutOffset) {
+                OffsetAndMetadata offsetAndMetadata = committed.get(tp);
+                offsetStores.put(tp, new OffsetStore(tp, unprocessedRecordMaxAge,
+                        offsetAndMetadata == null ? -1 : offsetAndMetadata.offset() - 1));
+            }
+        }
         runOnContextAndAwait(() -> {
             stopFlushAndCheckHealthTimer();
             assignments.addAll(partitions);
@@ -186,36 +196,20 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
      * @param record the record
      * @param <K> the key
      * @param <V> the value
-     * @return the record emitted once everything has been done
+     * @return the record
      */
     @Override
-    public <K, V> Uni<IncomingKafkaRecord<K, V>> received(IncomingKafkaRecord<K, V> record) {
+    public <K, V> IncomingKafkaRecord<K, V> received(IncomingKafkaRecord<K, V> record) {
         TopicPartition recordsTopicPartition = getTopicPartition(record);
+        offsetStores
+                .computeIfAbsent(recordsTopicPartition, k -> new OffsetStore(k, unprocessedRecordMaxAge, -1))
+                .received(record.getOffset());
 
-        OffsetStore offsetStore = offsetStores.get(recordsTopicPartition);
-        Uni<OffsetStore> uni;
-        if (offsetStore == null) {
-            uni = consumer.committed(recordsTopicPartition)
-                    .emitOn(runnable -> context.runOnContext(x -> runnable.run())) // Switch back to event loop
-                    .onItem().transform(offsets -> {
-                        OffsetAndMetadata lastCommitted = offsets.get(recordsTopicPartition);
-                        OffsetStore store = new OffsetStore(recordsTopicPartition, unprocessedRecordMaxAge,
-                                lastCommitted == null ? -1 : lastCommitted.offset() - 1);
-                        offsetStores.put(recordsTopicPartition, store);
-                        return store;
-                    });
-        } else {
-            uni = Uni.createFrom().item(offsetStore);
+        if (timerId < 0) {
+            startFlushAndCheckHealthTimer();
         }
 
-        return uni
-                .onItem().invoke(store -> {
-                    store.received(record.getOffset());
-                    if (timerId < 0) {
-                        startFlushAndCheckHealthTimer();
-                    }
-                })
-                .onItem().transform(x -> record);
+        return record;
     }
 
     /**
