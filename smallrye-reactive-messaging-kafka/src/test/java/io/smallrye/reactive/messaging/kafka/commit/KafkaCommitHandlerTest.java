@@ -126,8 +126,8 @@ public class KafkaCommitHandlerTest extends KafkaTestBase {
         source.getStream().subscribe().with(messages::add);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>(topic, counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>(topic, counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> messages.size() >= 10);
         assertThat(messages.stream().map(m -> ((KafkaRecord<String, Integer>) m).getPayload())
@@ -172,8 +172,8 @@ public class KafkaCommitHandlerTest extends KafkaTestBase {
         source.getStream().subscribe().with(messages::add);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>(topic, counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>(topic, counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> messages.size() >= 10);
         assertThat(messages.stream().map(m -> ((KafkaRecord<String, Integer>) m).getPayload())
@@ -229,8 +229,8 @@ public class KafkaCommitHandlerTest extends KafkaTestBase {
         source.getStream().subscribe().with(messages::add);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>(topic, counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>(topic, counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> messages.size() >= 10);
         assertThat(messages.stream().map(m -> ((KafkaRecord<String, Integer>) m).getPayload())
@@ -243,8 +243,8 @@ public class KafkaCommitHandlerTest extends KafkaTestBase {
                     assertTrue(healthReportBuilder.build().isOk());
                 });
 
-        new Thread(() -> usage.produceIntegers(30, null,
-                () -> new ProducerRecord<>(topic, counter.getAndIncrement()))).start();
+        usage.produceIntegers(30, null,
+                () -> new ProducerRecord<>(topic, counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> messages.size() >= 30);
 
@@ -296,8 +296,8 @@ public class KafkaCommitHandlerTest extends KafkaTestBase {
         await().until(() -> source.getConsumer().getAssignments().await().indefinitely().size() == 2);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10000, null,
-                () -> new ProducerRecord<>(topic, Integer.toString(counter.get() % 2), counter.getAndIncrement()))).start();
+        usage.produceIntegers(10000, null,
+                () -> new ProducerRecord<>(topic, Integer.toString(counter.get() % 2), counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> messages1.size() >= 10);
 
@@ -310,8 +310,8 @@ public class KafkaCommitHandlerTest extends KafkaTestBase {
         await().until(() -> source2.getConsumer().getAssignments().await().indefinitely().size() == 1
                 && source.getConsumer().getAssignments().await().indefinitely().size() == 1);
 
-        new Thread(() -> usage.produceIntegers(10000, null,
-                () -> new ProducerRecord<>(topic, Integer.toString(counter.get() % 2), counter.getAndIncrement()))).start();
+        usage.produceIntegers(10000, null,
+                () -> new ProducerRecord<>(topic, Integer.toString(counter.get() % 2), counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> messages1.size() + messages2.size() >= 10000);
 

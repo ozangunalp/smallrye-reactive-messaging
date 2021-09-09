@@ -39,8 +39,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("fail", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("fail", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 4);
         // Other records should not have been received.
@@ -60,8 +60,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("fail-payload", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("fail-payload", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 4);
         // Other records should not have been received.
@@ -79,8 +79,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("ignore", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("ignore", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 10);
         // All records should not have been received.
@@ -98,8 +98,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("ignore-payload", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("ignore-payload", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 10);
         // All records should not have been received.
@@ -124,8 +124,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("dead-letter-default", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("dead-letter-default", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 10);
         assertThat(bean.list()).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
@@ -163,8 +163,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("dq-payload-message-less", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("dq-payload-message-less", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 10);
         assertThat(bean.list()).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
@@ -202,8 +202,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("dq-payload", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("dq-payload", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 10);
         assertThat(bean.list()).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
@@ -241,8 +241,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("dq-itcp", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("dq-itcp", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 10);
         assertThat(bean.list()).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
@@ -278,8 +278,8 @@ public class KafkaFailureHandlerTest extends KafkaTestBase {
         await().until(this::isReady);
 
         AtomicInteger counter = new AtomicInteger();
-        new Thread(() -> usage.produceIntegers(10, null,
-                () -> new ProducerRecord<>("dead-letter-custom", counter.getAndIncrement()))).start();
+        usage.produceIntegers(10, null,
+                () -> new ProducerRecord<>("dead-letter-custom", counter.getAndIncrement()));
 
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.list().size() >= 10);
         assertThat(bean.list()).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
