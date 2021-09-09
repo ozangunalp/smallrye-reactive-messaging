@@ -6,6 +6,7 @@ on:
         branches:
             - main
             - 2.x
+            - throttled_commit_offset_partitions_assigned
         paths-ignore:
             - '.github/**'
 
