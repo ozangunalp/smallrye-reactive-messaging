@@ -196,7 +196,7 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
         Uni<OffsetStore> uni;
         if (offsetStore == null) {
             uni = consumer.committed(recordsTopicPartition)
-                    .emitOn(runnable -> context.runOnContext(x -> runnable.run())) // Switch back to event loop
+                    .emitOn(runnable -> runOnRecordContext(record, runnable)) // Switch back to event loop
                     .onItem().transform(offsets -> {
                         OffsetAndMetadata lastCommitted = offsets.get(recordsTopicPartition);
                         OffsetStore store = new OffsetStore(recordsTopicPartition, unprocessedRecordMaxAge,
@@ -254,7 +254,7 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
         CompletableFuture<Void> future = new CompletableFuture<>();
         // Be sure to run on the right context. The context has been store during the message reception
         // or partition assignment.
-        runOnContext(() -> {
+        runOnRecordContext(record, () -> {
             TopicPartition topicPartition = getTopicPartition(record);
             OffsetStore store = offsetStores
                     .get(topicPartition);

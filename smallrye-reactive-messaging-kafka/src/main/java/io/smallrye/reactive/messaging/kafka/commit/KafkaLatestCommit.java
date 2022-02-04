@@ -47,7 +47,7 @@ public class KafkaLatestCommit extends ContextHolder implements KafkaCommitHandl
 
     @Override
     public <K, V> CompletionStage<Void> handle(IncomingKafkaRecord<K, V> record) {
-        runOnContext(() -> {
+        runOnRecordContext(record, () -> {
             Map<TopicPartition, OffsetAndMetadata> map = new HashMap<>();
             TopicPartition key = new TopicPartition(record.getTopic(), record.getPartition());
             Long last = offsets.get(key);

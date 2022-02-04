@@ -1,9 +1,12 @@
 package io.smallrye.reactive.messaging.kafka.commit;
 
+import java.util.Optional;
 import java.util.concurrent.*;
 
 import org.apache.kafka.common.errors.InterruptException;
 
+import io.smallrye.reactive.messaging.kafka.IncomingKafkaRecord;
+import io.smallrye.reactive.messaging.providers.locals.LocalContextMetadata;
 import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 
@@ -50,6 +53,15 @@ public class ContextHolder {
             throw new InterruptException(e);
         } catch (ExecutionException | TimeoutException e) {
             throw new CompletionException(e);
+        }
+    }
+
+    public <K, V> void runOnRecordContext(IncomingKafkaRecord<K, V> record, Runnable runnable) {
+        Optional<LocalContextMetadata> contextMetadata = record.getContextMetadata();
+        if (contextMetadata.isPresent()) {
+            contextMetadata.get().context().runOnContext(x -> runnable.run());
+        } else {
+            runOnContext(runnable);
         }
     }
 
