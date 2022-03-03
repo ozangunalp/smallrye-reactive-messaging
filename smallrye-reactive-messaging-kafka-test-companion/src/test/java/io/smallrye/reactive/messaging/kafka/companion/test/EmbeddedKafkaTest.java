@@ -15,12 +15,14 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.Endpoint;
 import org.apache.kafka.common.config.SslConfigs;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.smallrye.reactive.messaging.kafka.companion.KafkaCompanion;
 import kafka.server.KafkaConfig;
 
+@Disabled
 public class EmbeddedKafkaTest {
 
     @Test

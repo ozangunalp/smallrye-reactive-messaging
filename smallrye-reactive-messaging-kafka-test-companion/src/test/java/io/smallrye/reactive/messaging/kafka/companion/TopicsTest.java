@@ -10,10 +10,12 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import io.smallrye.reactive.messaging.kafka.companion.test.KafkaCompanionTestBase;
 
+@Disabled
 public class TopicsTest extends KafkaCompanionTestBase {
 
     @Test
