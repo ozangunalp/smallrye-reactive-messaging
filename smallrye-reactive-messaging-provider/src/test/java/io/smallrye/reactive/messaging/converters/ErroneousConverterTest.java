@@ -1,15 +1,15 @@
 package io.smallrye.reactive.messaging.converters;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.inject.spi.DeploymentException;
 
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Message;
@@ -25,17 +25,25 @@ public class ErroneousConverterTest extends WeldTestBaseWithoutTails {
     @Test
     public void testConverterThrowingExceptionOnAccept() {
         addBeanClass(Source.class, Sink.class, PayloadProcessor.class, BadConverterThrowingExceptionOnAccept.class);
-        assertThatThrownBy(this::initialize)
-                .isInstanceOf(DeploymentException.class)
-                .hasStackTraceContaining("boom");
+        initialize();
+        Source source = get(Source.class);
+        // Conversion exceptions are logged and nack'd
+        assertThat(source.acks()).isEqualTo(0);
+        assertThat(source.nacks()).allSatisfy(throwable -> {
+            assertThat(throwable).hasStackTraceContaining("boom");
+        });
     }
 
     @Test
     public void testConverterThrowingExceptionOnConvert() {
         addBeanClass(Source.class, Sink.class, PayloadProcessor.class, BadConverterThrowingExceptionOnConvert.class);
-        assertThatThrownBy(this::initialize)
-                .isInstanceOf(DeploymentException.class)
-                .hasStackTraceContaining("boom");
+        initialize();
+        Source source = get(Source.class);
+        // Conversion exceptions are logged and nack'd
+        assertThat(source.acks()).isEqualTo(3);
+        assertThat(source.nacks()).allSatisfy(throwable -> {
+            assertThat(throwable).hasStackTraceContaining("boom");
+        });
     }
 
     @ApplicationScoped
@@ -87,7 +95,7 @@ public class ErroneousConverterTest extends WeldTestBaseWithoutTails {
     public static class Source {
 
         private final AtomicInteger acks = new AtomicInteger();
-        private final AtomicInteger nacks = new AtomicInteger();
+        private final List<Throwable> nackErrors = new CopyOnWriteArrayList<>();
 
         @Outgoing("in")
         public Multi<Message<String>> source() {
@@ -96,7 +104,7 @@ public class ErroneousConverterTest extends WeldTestBaseWithoutTails {
                         acks.incrementAndGet();
                         return CompletableFuture.completedFuture(null);
                     }, t -> {
-                        nacks.incrementAndGet();
+                        nackErrors.add(t);
                         return CompletableFuture.completedFuture(null);
                     }));
         }
@@ -105,8 +113,8 @@ public class ErroneousConverterTest extends WeldTestBaseWithoutTails {
             return acks.get();
         }
 
-        public int nacks() {
-            return nacks.get();
+        public List<Throwable> nacks() {
+            return nackErrors;
         }
     }
 
