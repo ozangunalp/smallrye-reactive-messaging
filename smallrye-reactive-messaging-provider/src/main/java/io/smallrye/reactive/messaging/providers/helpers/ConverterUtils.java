@@ -4,6 +4,7 @@ import java.lang.reflect.Type;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -11,9 +12,11 @@ import javax.enterprise.inject.Instance;
 import javax.enterprise.inject.spi.Prioritized;
 
 import org.eclipse.microprofile.reactive.messaging.Message;
+import org.reactivestreams.Publisher;
 
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.mutiny.infrastructure.Infrastructure;
 import io.smallrye.reactive.messaging.MessageConverter;
 
 public class ConverterUtils {
@@ -22,19 +25,28 @@ public class ConverterUtils {
         // Avoid direct instantiation.
     }
 
+    private static final Message<?> NULL_MESSAGE = null;
+
     public static Multi<? extends Message<?>> convert(Multi<? extends Message<?>> upstream,
             Instance<MessageConverter> converters, Type injectedPayloadType) {
         if (injectedPayloadType != null) {
             ConverterFunction converterFunction = new ConverterFunction(injectedPayloadType, converters);
-            return upstream.onItem().transformToUniAndConcatenate(message -> {
+            Function<? super Message<?>, ? extends Publisher<? extends Message<?>>> mapper = message -> {
                 try {
                     Message<?> converted = converterFunction.apply(message);
-                    return Uni.createFrom().item(converted);
+                    return Uni.createFrom().item(converted).toMulti();
                 } catch (Throwable t) {
                     return Uni.createFrom().completionStage(() -> message.nack(t))
-                            .replaceWith(Uni.createFrom().nullItem());
+                            .replaceWith(NULL_MESSAGE)
+                            .toMulti();
                 }
-            });
+            };
+            return Infrastructure.onMultiCreation(new MultiConcatMapOp<>(upstream
+            //                            .log("upstream")
+                    , mapper, false))
+                    //                    .log("concatmap")
+                    .filter(Objects::nonNull);
+            //                        return upstream.log("upstream").map(converterFunction::apply).log("map");
         }
         return upstream;
     }
@@ -107,4 +119,5 @@ public class ConverterUtils {
             }
         }
     }
+
 }

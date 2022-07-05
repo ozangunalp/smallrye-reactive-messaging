@@ -24,6 +24,7 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.semconv.trace.attributes.SemanticAttributes;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.mutiny.infrastructure.Infrastructure;
 import io.smallrye.reactive.messaging.TracingMetadata;
 import io.smallrye.reactive.messaging.health.HealthReport;
 import io.smallrye.reactive.messaging.kafka.*;
@@ -33,6 +34,7 @@ import io.smallrye.reactive.messaging.kafka.fault.KafkaFailStop;
 import io.smallrye.reactive.messaging.kafka.fault.KafkaFailureHandler;
 import io.smallrye.reactive.messaging.kafka.fault.KafkaIgnoreFailure;
 import io.smallrye.reactive.messaging.kafka.health.KafkaSourceHealth;
+import io.smallrye.reactive.messaging.providers.helpers.MultiConcatMapOp;
 import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.impl.VertxInternal;
 import io.vertx.mutiny.core.Vertx;
@@ -179,19 +181,12 @@ public class KafkaSource<K, V> {
                 reportFailure(t, false);
             });
 
-            Multi<IncomingKafkaRecordBatch<K, V>> incomingMulti;
-            // TODO ogu hack to avoid buffering items using flatmap -> received is only implemented by throttled strategy
-            if (KafkaCommitHandler.Strategy.from(commitStrategy) != KafkaCommitHandler.Strategy.THROTTLED) {
-                incomingMulti = multi.onItem().transform(rec -> new IncomingKafkaRecordBatch<>(rec, channel,
-                        commitHandler, failureHandler, isCloudEventEnabled, isTracingEnabled));
-            } else {
-                incomingMulti = multi
-                        .onItem().transformToUniAndConcatenate(rec -> {
-                            IncomingKafkaRecordBatch<K, V> batch = new IncomingKafkaRecordBatch<>(rec, channel,
-                                    commitHandler, failureHandler, isCloudEventEnabled, isTracingEnabled);
-                            return receiveBatchRecord(batch);
-                        });
-            }
+            Multi<IncomingKafkaRecordBatch<K, V>> incomingMulti = Infrastructure
+                    .onMultiCreation(new MultiConcatMapOp<>(multi, rec -> {
+                        IncomingKafkaRecordBatch<K, V> batch = new IncomingKafkaRecordBatch<>(rec, channel,
+                                commitHandler, failureHandler, isCloudEventEnabled, isTracingEnabled);
+                        return receiveBatchRecord(batch).toMulti();
+                    }, false));
 
             if (config.getTracingEnabled()) {
                 incomingMulti = incomingMulti.onItem().invoke(this::incomingTrace);
