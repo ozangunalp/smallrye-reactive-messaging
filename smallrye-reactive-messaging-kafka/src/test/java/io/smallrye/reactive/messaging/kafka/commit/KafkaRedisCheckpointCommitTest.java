@@ -30,7 +30,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -54,7 +53,6 @@ import io.vertx.mutiny.redis.client.Response;
 import io.vertx.redis.client.RedisOptions;
 
 @Tag(TestTags.FLAKY)
-@Disabled
 public class KafkaRedisCheckpointCommitTest extends KafkaCompanionTestBase {
 
     private KafkaSource<String, Integer> source;
@@ -116,8 +114,12 @@ public class KafkaRedisCheckpointCommitTest extends KafkaCompanionTestBase {
             System.out.println(states.stream().map(JsonObject::toString).collect(Collectors.joining(", "))
                     + " : " + offset + " " + state);
 
-            return offset == sum && state == sum * (sum - 1) / 2;
+            return offset == sum && state == sum(sum);
         });
+    }
+
+    private int sum(int sum) {
+        return sum * (sum - 1) / 2;
     }
 
     @Test
@@ -222,6 +224,37 @@ public class KafkaRedisCheckpointCommitTest extends KafkaCompanionTestBase {
                 .atMost(1, TimeUnit.MINUTES)
                 .until(() -> application.count() >= expected);
         assertThat(application.getReceived().keySet()).hasSizeGreaterThanOrEqualTo(getMaxNumberOfEventLoop(3));
+
+        checkOffsetSum(expected);
+    }
+
+    @Test
+    public void testWithPreviousState() {
+        addBeans(KafkaRedisCheckpointCommit.Factory.class);
+        String groupId = UUID.randomUUID().toString();
+
+        redisClient.send(Request.cmd(Command.SET)
+                .arg(topic + ":" + 0)
+                .arg(JsonObject.of("offset", 500, "state", sum(500)).toBuffer().toString()))
+                .await().indefinitely();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("auto.offset.reset", "earliest")
+                .with("commit-strategy", "checkpoint-redis")
+                .with("checkpoint-redis.connectionString", getRedisString())
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        MyApplication application = runApplication(config, MyApplication.class);
+
+        int expected = 1000;
+        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, Integer.toString(i), i), expected)
+                .awaitCompletion(Duration.ofMinutes(1));
+
+        await()
+                .atMost(1, TimeUnit.MINUTES)
+                .until(() -> application.count() >= expected);
 
         checkOffsetSum(expected);
     }
