@@ -7,6 +7,7 @@ on:
             - main
             - 2.x
             - jakarta
+            - spi_commit_failure_ci
         paths-ignore:
             - '.github/**'
 
