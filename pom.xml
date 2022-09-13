@@ -143,6 +143,7 @@
     <module>test-common</module>
     <module>tck</module>
     <module>documentation</module>
+    <!-- trigger build -->
   </modules>
 
   <dependencyManagement>
