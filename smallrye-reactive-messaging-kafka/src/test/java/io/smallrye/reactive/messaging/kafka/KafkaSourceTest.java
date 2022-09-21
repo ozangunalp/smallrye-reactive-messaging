@@ -30,6 +30,7 @@ import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
 import org.jboss.weld.exceptions.DeploymentException;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testng.Assert;
@@ -379,7 +380,7 @@ public class KafkaSourceTest extends KafkaCompanionTestBase {
         await().atMost(2, TimeUnit.MINUTES).until(() -> list.size() >= 100);
     }
 
-    @Test
+    @RepeatedTest(10)
     @Tag(TestTags.FLAKY)
     public void testABeanConsumingTheKafkaMessagesWithPartitions() {
         companion.topics().createAndWait(topic, 2, Duration.ofMinutes(1));

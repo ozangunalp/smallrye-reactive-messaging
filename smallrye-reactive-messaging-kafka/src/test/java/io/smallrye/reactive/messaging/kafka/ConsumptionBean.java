@@ -20,6 +20,7 @@ public class ConsumptionBean {
     @Outgoing("sink")
     @Acknowledgment(Acknowledgment.Strategy.MANUAL)
     public Message<Integer> process(KafkaRecord<String, Integer> input) {
+        System.out.println(Thread.currentThread().getName() + " : " + input.getPartition() + " - " + input.getPayload());
         kafka.add(input);
         return input.withPayload(input.getPayload() + 1);
     }
