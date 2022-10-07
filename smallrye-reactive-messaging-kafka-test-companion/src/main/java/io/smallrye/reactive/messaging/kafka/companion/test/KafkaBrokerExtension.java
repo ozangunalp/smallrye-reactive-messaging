@@ -21,8 +21,6 @@ import org.junit.jupiter.api.extension.*;
 import org.junit.jupiter.api.extension.ExtensionContext.Store.CloseableResource;
 import org.testcontainers.shaded.org.awaitility.core.ConditionTimeoutException;
 
-import io.strimzi.test.container.StrimziKafkaContainer;
-
 /**
  * Junit extension for creating Strimzi Kafka broker
  */
@@ -31,7 +29,7 @@ public class KafkaBrokerExtension implements BeforeAllCallback, BeforeEachCallba
 
     public static final String KAFKA_VERSION = "3.1.0";
 
-    protected StrimziKafkaContainer kafka;
+    protected KafkaNativeContainer kafka;
 
     @Override
     public void beforeAll(ExtensionContext context) {
@@ -50,17 +48,12 @@ public class KafkaBrokerExtension implements BeforeAllCallback, BeforeEachCallba
         stopKafkaBroker();
     }
 
-    public static StrimziKafkaContainer createKafkaContainer() {
-        return configureKafkaContainer(new StrimziKafkaContainer());
+    public static KafkaNativeContainer createKafkaContainer() {
+        return new KafkaNativeContainer();
     }
 
-    public static <T extends StrimziKafkaContainer> T configureKafkaContainer(T container) {
-        String kafkaVersion = System.getProperty("kafka-container-version", KAFKA_VERSION);
-        container.withKafkaVersion(kafkaVersion);
-        Map<String, String> config = new HashMap<>();
-        config.put("log.cleaner.enable", "false");
-        container.withKafkaConfigurationMap(config);
-        return container;
+    public static KafkaNativeContainer createKafkaContainer(int port) {
+        return new KafkaNativeContainer().withPort(port);
     }
 
     public void startKafkaBroker() {
@@ -79,7 +72,7 @@ public class KafkaBrokerExtension implements BeforeAllCallback, BeforeEachCallba
      * @param gracePeriodInSecond number of seconds to wait before restarting
      * @return the new broker
      */
-    public static StrimziKafkaContainer restart(StrimziKafkaContainer kafka, int gracePeriodInSecond) {
+    public static KafkaNativeContainer restart(KafkaNativeContainer kafka, int gracePeriodInSecond) {
         int port = kafka.getMappedPort(9092);
         try {
             kafka.close();
@@ -92,8 +85,8 @@ public class KafkaBrokerExtension implements BeforeAllCallback, BeforeEachCallba
         return startKafkaBroker(port);
     }
 
-    public static StrimziKafkaContainer startKafkaBroker(int port) {
-        StrimziKafkaContainer kafka = createKafkaContainer().withPort(port);
+    public static KafkaNativeContainer startKafkaBroker(int port) {
+        KafkaNativeContainer kafka = createKafkaContainer(port);
         kafka.start();
         await().until(kafka::isRunning);
         return kafka;
