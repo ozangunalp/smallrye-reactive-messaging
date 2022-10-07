@@ -7,13 +7,12 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.Test;
 
 import io.smallrye.reactive.messaging.kafka.companion.KafkaCompanion;
-import io.strimzi.test.container.StrimziKafkaContainer;
 
 public class KafkaRestartTest {
 
     @Test
     void testRestartedBroker() {
-        try (StrimziKafkaContainer kafkaContainer = KafkaBrokerExtension.createKafkaContainer()) {
+        try (KafkaNativeContainer kafkaContainer = KafkaBrokerExtension.createKafkaContainer()) {
             kafkaContainer.start();
             await().until(kafkaContainer::isRunning);
             String bootstrapServers = kafkaContainer.getBootstrapServers();
@@ -22,13 +21,13 @@ public class KafkaRestartTest {
                         .fromRecords(new ProducerRecord<>("topic", "1"))
                         .awaitCompletion();
 
-                StrimziKafkaContainer restarted = KafkaBrokerExtension.restart(kafkaContainer, 2);
+                try (KafkaNativeContainer restarted = KafkaBrokerExtension.restart(kafkaContainer, 2)) {
+                    assertThat(restarted.getBootstrapServers()).isEqualTo(bootstrapServers);
 
-                assertThat(restarted.getBootstrapServers()).isEqualTo(bootstrapServers);
-
-                companion.produceStrings()
-                        .fromRecords(new ProducerRecord<>("topic", "1"))
-                        .awaitCompletion();
+                    companion.produceStrings()
+                            .fromRecords(new ProducerRecord<>("topic", "1"))
+                            .awaitCompletion();
+                }
             }
         }
     }

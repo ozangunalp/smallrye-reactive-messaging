@@ -11,12 +11,11 @@ import org.testcontainers.utility.DockerImageName;
 
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
-import io.strimzi.test.container.StrimziKafkaContainer;
 
 /**
  * Sets advertised listeners to the proxied port instead of exposed port
  */
-public class ProxiedStrimziKafkaContainer extends StrimziKafkaContainer {
+public class ProxiedStrimziKafkaContainer extends KafkaNativeContainer {
 
     public static final Logger LOGGER = Logger.getLogger(ProxiedStrimziKafkaContainer.class.getName());
 
@@ -31,13 +30,6 @@ public class ProxiedStrimziKafkaContainer extends StrimziKafkaContainer {
             .asCompatibleSubstituteFor("shopify/toxiproxy"))
                     .withNetworkAliases(TOXIPROXY_NETWORK_ALIAS);
     private KafkaProxy kafkaProxy;
-
-    public ProxiedStrimziKafkaContainer() {
-    }
-
-    public ProxiedStrimziKafkaContainer(String dockerImageName) {
-        super(dockerImageName);
-    }
 
     @Override
     protected void doStart() {

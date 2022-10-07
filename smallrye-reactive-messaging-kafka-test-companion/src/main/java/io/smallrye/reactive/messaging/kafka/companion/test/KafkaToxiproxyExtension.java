@@ -22,7 +22,7 @@ public class KafkaToxiproxyExtension extends KafkaBrokerExtension
         KafkaToxiproxyExtension extension = (KafkaToxiproxyExtension) globalStore.get(KafkaToxiproxyExtension.class);
         if (extension == null) {
             LOGGER.info("Starting Kafka broker proxy");
-            kafka = configureKafkaContainer(new ProxiedStrimziKafkaContainer());
+            kafka = new ProxiedStrimziKafkaContainer();
             kafka.setNetwork(Network.newNetwork());
             kafka.start();
             await().until(() -> kafka.isRunning());

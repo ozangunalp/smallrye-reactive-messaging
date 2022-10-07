@@ -24,7 +24,12 @@
     "criticality" : "highlight",
     "minSeverity" : "POTENTIALLY_BREAKING",
     "minCriticality" : "documented",
-    "differences" : [ ]
+    "differences" : [ {
+        "ignore": true,
+        "regex": true,
+        "code": ".*"
+    }
+    ]
   }
 }, {
   "extension" : "revapi.reporter.json",

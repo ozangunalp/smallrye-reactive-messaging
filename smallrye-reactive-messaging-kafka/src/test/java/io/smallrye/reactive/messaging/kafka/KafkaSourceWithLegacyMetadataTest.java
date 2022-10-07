@@ -44,11 +44,11 @@ import io.smallrye.reactive.messaging.kafka.base.UnsatisfiedInstance;
 import io.smallrye.reactive.messaging.kafka.commit.KafkaThrottledLatestProcessedCommit;
 import io.smallrye.reactive.messaging.kafka.companion.KafkaCompanion;
 import io.smallrye.reactive.messaging.kafka.companion.test.KafkaBrokerExtension;
+import io.smallrye.reactive.messaging.kafka.companion.test.KafkaNativeContainer;
 import io.smallrye.reactive.messaging.kafka.fault.KafkaFailStop;
 import io.smallrye.reactive.messaging.kafka.impl.KafkaSource;
 import io.smallrye.reactive.messaging.providers.connectors.ExecutionHolder;
 import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
-import io.strimzi.test.container.StrimziKafkaContainer;
 
 /**
  * Duplicate of {@link KafkaSourceTest} - delete once we remove the legacy
@@ -219,7 +219,7 @@ public class KafkaSourceWithLegacyMetadataTest extends KafkaCompanionTestBase {
     @Tag(TestTags.SLOW)
     public void testRetry() {
         // This test need an individual Kafka container
-        try (StrimziKafkaContainer kafka = KafkaBrokerExtension.createKafkaContainer()) {
+        try (KafkaNativeContainer kafka = KafkaBrokerExtension.createKafkaContainer()) {
             kafka.start();
             await().until(kafka::isRunning);
             MapBasedConfig config = newCommonConfigForSource()
@@ -243,7 +243,7 @@ public class KafkaSourceWithLegacyMetadataTest extends KafkaCompanionTestBase {
             await().atMost(2, TimeUnit.MINUTES).until(() -> messages1.size() >= 10);
 
             try (@SuppressWarnings("unused")
-            StrimziKafkaContainer container = restart(kafka, 2)) {
+            KafkaNativeContainer container = restart(kafka, 2)) {
                 kafkaCompanion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, 10), 10);
 
                 await().atMost(2, TimeUnit.MINUTES).until(() -> messages1.size() >= 20);
