@@ -1,59 +1,60 @@
 package io.smallrye.reactive.messaging.kafka.commit;
 
+import static io.smallrye.reactive.messaging.kafka.commit.KafkaCheckpointCommit.CHECKPOINT_COMMIT_NAME;
+import static io.smallrye.reactive.messaging.kafka.i18n.KafkaLogging.log;
+
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.util.Collection;
+import java.util.Map;
 import java.util.Optional;
-import java.util.function.BiConsumer;
 
 import javax.enterprise.context.ApplicationScoped;
 
-import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.TopicPartition;
 
-import io.smallrye.common.annotation.Experimental;
 import io.smallrye.common.annotation.Identifier;
+import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.mutiny.tuples.Tuple2;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
-import io.smallrye.reactive.messaging.kafka.KafkaConsumer;
 import io.vertx.core.json.Json;
 import io.vertx.mutiny.core.Vertx;
 import io.vertx.mutiny.core.buffer.Buffer;
 
-/**
- * Checkpointing commit handler which uses local files as state store. It creates a file per topic-partition.
- */
-@Experimental("Experimental API")
-public class KafkaFileCheckpointCommit extends KafkaCheckpointCommit {
+public class FileStateStore implements StateStore {
 
-    public static final String FILE_CHECKPOINT_NAME = "checkpoint-file";
-    private final Vertx mutinyVertx;
+    public static final String STATE_STORE_NAME = "file";
+    private final Vertx vertx;
     private final File stateDir;
 
-    public KafkaFileCheckpointCommit(KafkaConnectorIncomingConfiguration config,
-            Vertx vertx,
-            KafkaConsumer<?, ?> consumer,
-            BiConsumer<Throwable, Boolean> reportFailure,
-            int defaultTimeout,
-            File stateDir) {
-        super(vertx, config, consumer, reportFailure, defaultTimeout);
-        this.mutinyVertx = vertx;
+    public FileStateStore(Vertx vertx, File stateDir) {
+        this.vertx = vertx;
         this.stateDir = stateDir;
     }
 
     @ApplicationScoped
-    @Identifier(FILE_CHECKPOINT_NAME)
-    public static class Factory implements KafkaCommitHandler.Factory {
+    @Identifier(STATE_STORE_NAME)
+    public static class Factory implements StateStore.Factory {
 
         @Override
-        public KafkaCommitHandler create(KafkaConnectorIncomingConfiguration config, Vertx vertx,
-                KafkaConsumer<?, ?> consumer, BiConsumer<Throwable, Boolean> reportFailure) {
-            int defaultTimeout = config.config()
-                    .getOptionalValue(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, Integer.class)
-                    .orElse(60000);
-            String stateDir = config.config().getValue(FILE_CHECKPOINT_NAME + ".stateDir", String.class);
-
-            return new KafkaFileCheckpointCommit(config, vertx, consumer, reportFailure, defaultTimeout,
-                    new File(stateDir));
+        public StateStore create(KafkaConnectorIncomingConfiguration config, Vertx vertx) {
+            String dir = config.config().getValue(CHECKPOINT_COMMIT_NAME + "." + STATE_STORE_NAME + ".state-dir",
+                    String.class);
+            File stateDir;
+            if (dir == null) {
+                try {
+                    stateDir = Files.createTempDirectory("io.smallrye.reactive.messaging.kafka").toFile();
+                } catch (IOException e) {
+                    // TODO custom exception
+                    throw new IllegalStateException(e);
+                }
+            } else {
+                stateDir = new File(dir);
+            }
+            return new FileStateStore(vertx, stateDir);
         }
     }
 
@@ -62,11 +63,18 @@ public class KafkaFileCheckpointCommit extends KafkaCheckpointCommit {
     }
 
     @Override
+    public Uni<Map<TopicPartition, ProcessingState<?>>> fetchProcessingState(Collection<TopicPartition> partitions) {
+        return Multi.createFrom().iterable(partitions)
+                .onItem().transformToUniAndConcatenate(p -> fetchProcessingState(p).map(s -> Tuple2.of(p, s)))
+                .filter(t -> t.getItem2() != null)
+                .collect().asMap(Tuple2::getItem1, Tuple2::getItem2);
+    }
+
     protected Uni<ProcessingState<?>> fetchProcessingState(TopicPartition partition) {
         String statePath = getStatePath(partition);
-        return mutinyVertx.fileSystem().exists(statePath).chain(exists -> {
+        return vertx.fileSystem().exists(statePath).chain(exists -> {
             if (exists)
-                return mutinyVertx.fileSystem().readFile(statePath)
+                return vertx.fileSystem().readFile(statePath)
                         .map(this::deserializeState)
                         .onFailure().invoke(t -> log.errorf(t, "Error fetching processing state for partition %s", partition))
                         .onItem().invoke(r -> log.debugf("Fetched state for partition %s : %s", partition, r));
@@ -79,13 +87,20 @@ public class KafkaFileCheckpointCommit extends KafkaCheckpointCommit {
     }
 
     @Override
+    public Uni<Void> persistProcessingState(Map<TopicPartition, ProcessingState<?>> state) {
+        return Multi.createFrom().iterable(state.entrySet())
+                .onItem().transformToUniAndConcatenate(e -> persistProcessingState(e.getKey(), e.getValue()))
+                .collect().asList()
+                .replaceWithVoid();
+    }
+
     protected Uni<Void> persistProcessingState(TopicPartition partition, ProcessingState<?> state) {
         String statePath = getStatePath(partition);
         if (state != null) {
-            return mutinyVertx.fileSystem().exists(statePath).chain(exists -> {
+            return vertx.fileSystem().exists(statePath).chain(exists -> {
                 if (exists)
                     return fetchProcessingState(partition).onFailure().recoverWithNull();
-                return mutinyVertx.fileSystem().createFile(statePath)
+                return vertx.fileSystem().createFile(statePath)
                         .onItem().transform(x -> (ProcessingState<?>) null)
                         .onFailure(t -> Optional.ofNullable(t.getCause())
                                 .map(Object::getClass).orElse(null) == FileAlreadyExistsException.class)
@@ -96,7 +111,7 @@ public class KafkaFileCheckpointCommit extends KafkaCheckpointCommit {
                             s.getOffset(), state.getOffset());
                     return Uni.createFrom().voidItem();
                 } else {
-                    return mutinyVertx.fileSystem().writeFile(statePath, serializeState(state));
+                    return vertx.fileSystem().writeFile(statePath, serializeState(state));
                 }
             })
                     .onFailure()
