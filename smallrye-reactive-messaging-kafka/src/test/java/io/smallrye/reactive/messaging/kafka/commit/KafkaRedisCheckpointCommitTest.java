@@ -30,7 +30,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -53,8 +52,6 @@ import io.vertx.mutiny.redis.client.Request;
 import io.vertx.mutiny.redis.client.Response;
 import io.vertx.redis.client.RedisOptions;
 
-@Tag(TestTags.FLAKY)
-@Disabled
 public class KafkaRedisCheckpointCommitTest extends KafkaCompanionTestBase {
 
     private KafkaSource<String, Integer> source;
