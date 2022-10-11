@@ -74,10 +74,6 @@ public class StateStore<T> {
         return persist;
     }
 
-    public Optional<ProcessingState<T>> getCurrent() {
-        return Optional.ofNullable(currentSupplier.get());
-    }
-
     public Optional<ProcessingState<T>> getNext() {
         return Optional.ofNullable(next);
     }
@@ -92,8 +88,7 @@ public class StateStore<T> {
     }
 
     public T transformAndStoreLocal(T initialState, Function<T, T> transformation) {
-        Optional<ProcessingState<T>> current = getCurrent();
-        ProcessingState<T> processingState = current.orElse(new ProcessingState<>(initialState, 0L));
+        ProcessingState<T> processingState = ProcessingState.getOrDefault(currentSupplier.get(), initialState);
         if (recordOffset >= processingState.getOffset()) {
             return storeLocal(transformation.apply(processingState.getState()));
         } else {
@@ -113,8 +108,7 @@ public class StateStore<T> {
     }
 
     public T transformAndStoreOnAck(T initialState, Function<T, T> transformation) {
-        Optional<ProcessingState<T>> current = getCurrent();
-        ProcessingState<T> processingState = current.orElse(new ProcessingState<>(initialState, 0L));
+        ProcessingState<T> processingState = ProcessingState.getOrDefault(currentSupplier.get(), initialState);
         if (recordOffset >= processingState.getOffset()) {
             return storeOnAck(transformation.apply(processingState.getState()));
         } else {

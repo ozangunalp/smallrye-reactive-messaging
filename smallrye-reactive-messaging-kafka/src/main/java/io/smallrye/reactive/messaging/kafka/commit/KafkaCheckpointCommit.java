@@ -5,8 +5,6 @@ import static io.smallrye.reactive.messaging.kafka.commit.StateStore.isPersist;
 
 import java.time.Duration;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,7 +45,6 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
     protected KafkaLogging log = Logger.getMessageLogger(KafkaLogging.class, "io.smallrye.reactive.messaging.kafka");
 
     protected final Map<TopicPartition, ProcessingState<?>> processingStateMap = new ConcurrentHashMap<>();
-    private final Collection<TopicPartition> assignments = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     protected final KafkaConnectorIncomingConfiguration config;
     protected final KafkaConsumer<?, ?> consumer;
@@ -80,7 +77,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
     @Override
     public <K, V> Uni<Void> handle(IncomingKafkaRecord<K, V> record) {
         TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
-        if (assignments.contains(tp)) {
+        if (processingStateMap.containsKey(tp)) {
             ProcessingState<?> newState = getProcessingState(record);
             boolean persist = isPersist(record);
             if (newState != null) {
@@ -99,8 +96,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
     @Override
     public void terminate(boolean graceful) {
         log.warnf("Terminating current local state to %s : %s", consumerId, processingStateMap);
-        persistStateFor(new HashSet<>(assignments))
-                .onSubscription().invoke(assignments::clear)
+        persistStateFor(processingStateMap.keySet())
                 .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
         processingStateMap.clear();
@@ -111,15 +107,8 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
         List<? extends Tuple2<TopicPartition, ? extends ProcessingState<?>>> states = Multi.createFrom().iterable(partitions)
                 .onItem().transformToUniAndConcatenate(tp -> fetchProcessingState(tp).map(s -> Tuple2.of(tp, s)))
                 .emitOn(this::runOnContext) // state map is accessed on the captured context
-                .onItem().invoke(t -> {
-                    ProcessingState<?> state = t.getItem2();
-                    TopicPartition topicPartition = t.getItem1();
-                    if (state != null) {
-                        processingStateMap.put(topicPartition, state);
-                    }
-                })
-                .onSubscription().invoke(() -> assignments.addAll(partitions))
-                .runSubscriptionOn(this::runOnContext)
+                .onItem().invoke(t -> processingStateMap.put(t.getItem1(), ProcessingState.getOrEmpty(t.getItem2())))
+                .runSubscriptionOn(this::runOnContext) // state map is accessed on the captured context
                 .collect().asList()
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
         Consumer<?, ?> kafkaConsumer = consumer.unwrap();
@@ -134,7 +123,8 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
     public void partitionsRevoked(Collection<TopicPartition> partitions) {
         log.warnf("Partitions revoked to %s : %s", consumerId, processingStateMap);
         persistStateFor(partitions)
-                .onSubscription().invoke(() -> assignments.removeAll(partitions))
+                .emitOn(this::runOnContext)
+                .onItem().invoke(() -> partitions.forEach(processingStateMap::remove))
                 .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
     }
@@ -142,7 +132,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
     private Uni<List<Void>> persistStateFor(Collection<TopicPartition> partitions) {
         return Multi.createFrom().iterable(partitions)
                 .onItem().transform(tp -> Tuple2.of(tp, processingStateMap.get(tp)))
-                .skip().where(t -> t.getItem2() == null)
+                .skip().where(t -> ProcessingState.isEmptyOrNull(t.getItem2()))
                 .onItem().transformToUniAndConcatenate(t -> this.persistProcessingState(t.getItem1(), t.getItem2()))
                 .collect().asList();
     }
