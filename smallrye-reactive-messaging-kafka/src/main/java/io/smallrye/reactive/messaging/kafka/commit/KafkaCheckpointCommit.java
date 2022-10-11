@@ -8,6 +8,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 
 import org.apache.kafka.clients.consumer.Consumer;
@@ -44,7 +45,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
 
     protected KafkaLogging log = Logger.getMessageLogger(KafkaLogging.class, "io.smallrye.reactive.messaging.kafka");
 
-    protected final Map<TopicPartition, ProcessingState<?>> processingStateMap = new HashMap<>();
+    protected final Map<TopicPartition, ProcessingState<?>> processingStateMap = new ConcurrentHashMap<>();
 
     protected final KafkaConnectorIncomingConfiguration config;
     protected final KafkaConsumer<?, ?> consumer;
@@ -107,7 +108,13 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
                 .emitOn(this::runOnContext) // state map is accessed on the captured context
                 .onItem().transformToUniAndConcatenate(tp -> fetchProcessingState(tp).map(s -> Tuple2.of(tp, s)))
                 .emitOn(this::runOnContext) // state map is accessed on the captured context
-                .onItem().invoke(t -> processingStateMap.put(t.getItem1(), t.getItem2()))
+                .onItem().invoke(t -> {
+                    ProcessingState<?> state = t.getItem2();
+                    TopicPartition topicPartition = t.getItem1();
+                    if (state != null) {
+                        processingStateMap.put(topicPartition, state);
+                    }
+                })
                 .collect().asList()
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
         Consumer<?, ?> kafkaConsumer = consumer.unwrap();
