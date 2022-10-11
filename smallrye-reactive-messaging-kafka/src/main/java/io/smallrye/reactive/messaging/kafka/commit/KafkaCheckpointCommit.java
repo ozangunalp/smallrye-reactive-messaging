@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.function.BiConsumer;
 
 import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.TopicPartition;
 import org.jboss.logging.Logger;
 
@@ -48,6 +49,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
     protected final KafkaConnectorIncomingConfiguration config;
     protected final KafkaConsumer<?, ?> consumer;
     protected final BiConsumer<Throwable, Boolean> reportFailure;
+    private final String consumerId;
 
     public KafkaCheckpointCommit(Vertx vertx,
             KafkaConnectorIncomingConfiguration config,
@@ -57,6 +59,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
         super(vertx, defaultTimeout);
         this.config = config;
         this.consumer = consumer;
+        this.consumerId = (String) consumer.configuration().get(ConsumerConfig.CLIENT_ID_CONFIG);
         this.reportFailure = reportFailure;
     }
 
@@ -90,6 +93,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
 
     @Override
     public void terminate(boolean graceful) {
+        log.warnf("Terminating current local state to %s : %s", consumerId, processingStateMap);
         consumer.getAssignments()
                 .chain(this::persistStateFor)
                 .emitOn(this::runOnContext) // access state map on the captured context
@@ -107,6 +111,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
                 .collect().asList()
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
         Consumer<?, ?> kafkaConsumer = consumer.unwrap();
+        log.warnf("Partitions assigned to %s : %s", consumerId, states);
         for (Tuple2<TopicPartition, ? extends ProcessingState<?>> tuple : states) {
             ProcessingState<?> state = tuple.getItem2();
             kafkaConsumer.seek(tuple.getItem1(), state != null ? state.getOffset() : 0L);
@@ -115,6 +120,7 @@ public abstract class KafkaCheckpointCommit extends ContextHolder implements Kaf
 
     @Override
     public void partitionsRevoked(Collection<TopicPartition> partitions) {
+        log.warnf("Partitions revoked to %s : %s", consumerId, processingStateMap);
         persistStateFor(partitions).await().atMost(Duration.ofMillis(getTimeoutInMillis()));
     }
 

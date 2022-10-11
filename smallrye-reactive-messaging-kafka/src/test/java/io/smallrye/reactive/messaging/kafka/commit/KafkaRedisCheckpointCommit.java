@@ -3,6 +3,7 @@ package io.smallrye.reactive.messaging.kafka.commit;
 import static io.vertx.mutiny.redis.client.Request.cmd;
 
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
@@ -115,9 +116,15 @@ public class KafkaRedisCheckpointCommit extends KafkaCheckpointCommit {
                                 .map(this::deserializeState)
                                 .orElse(null))
                         .chain(s -> {
-                            if (s != null && s.getOffset() > state.getOffset()) {
-                                log.warnf("Skipping persist operation for partition %s : higher offset found on store %d > %d",
-                                        partition, s.getOffset(), state.getOffset());
+                            if (s != null && s.getOffset() >= state.getOffset()) {
+                                if (!Objects.equals(s.getOffset(), state.getOffset())) {
+                                    log.warnf("Skipping persist operation for partition %s : " +
+                                            "higher offset found on store %d (%s) >= %d (%s)",
+                                            partition, s.getOffset(), s.getState(), state.getOffset(), state.getState());
+                                } else if (!Objects.equals(s.getState(), state.getState())) {
+                                    log.warnf("Local and remote states don't match for partition %s : %d (%s) != %d (%s)",
+                                            partition, s.getOffset(), s.getState(), state.getOffset(), state.getState());
+                                }
                                 return Uni.createFrom().voidItem();
                             } else {
                                 return redis.batch(Arrays.asList(
