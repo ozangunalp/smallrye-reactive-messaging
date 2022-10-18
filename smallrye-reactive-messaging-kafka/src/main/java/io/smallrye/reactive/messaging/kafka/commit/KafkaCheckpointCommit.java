@@ -173,20 +173,14 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
                     CheckpointState state = checkpointStateMap.get(tp);
                     if (state != null) {
                         state.receivedRecord();
+                        r.injectMetadata(new CheckpointMetadata<>(tp, record.getOffset(), state::getProcessingState));
                     }
-                    r.injectMetadata(
-                            new CheckpointMetadata<>(tp, record.getOffset(), () -> this.getCurrentProcessingState(tp)));
                     return r;
                 }).onItem().invoke(() -> {
                     if (timerId < 0) {
                         startFlushAndCheckHealthTimer();
                     }
                 });
-    }
-
-    private ProcessingState<?> getCurrentProcessingState(TopicPartition tp) {
-        CheckpointState checkpointState = checkpointStateMap.get(tp);
-        return checkpointState != null ? checkpointState.getProcessingState() : null;
     }
 
     @Override
