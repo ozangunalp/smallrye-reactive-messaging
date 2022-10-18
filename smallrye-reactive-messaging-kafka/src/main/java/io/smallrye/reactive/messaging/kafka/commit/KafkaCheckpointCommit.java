@@ -27,6 +27,7 @@ import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.kafka.IncomingKafkaRecord;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
 import io.smallrye.reactive.messaging.kafka.KafkaConsumer;
+import io.smallrye.reactive.messaging.providers.helpers.VertxContext;
 import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.mutiny.core.Vertx;
 
@@ -166,90 +167,74 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
 
     @Override
     public <K, V> Uni<IncomingKafkaRecord<K, V>> received(IncomingKafkaRecord<K, V> record) {
-        return Uni.createFrom().item(record)
-                .emitOn(this::runOnContext) // state map is accessed on the captured context
-                .onItem().transform(r -> {
-                    TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
-                    CheckpointState state = checkpointStateMap.get(tp);
-                    if (state != null) {
-                        state.receivedRecord();
-                        r.injectMetadata(new CheckpointMetadata<>(tp, record.getOffset(), state::getProcessingState));
-                    }
-                    return r;
-                }).onItem().invoke(() -> {
-                    if (timerId < 0) {
-                        startFlushAndCheckHealthTimer();
-                    }
-                });
+        return Uni.createFrom().completionStage(VertxContext.runOnContext(context.getDelegate(), f -> {
+            TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
+            CheckpointState state = checkpointStateMap.get(tp);
+            if (state != null) {
+                state.receivedRecord();
+                record.injectMetadata(new CheckpointMetadata<>(tp, record.getOffset(), state::getProcessingState));
+            }
+            if (timerId < 0) {
+                startFlushAndCheckHealthTimer();
+            }
+            record.runOnMessageContext(() -> f.complete(record));
+        }));
     }
 
     @Override
     public <K, V> Uni<Void> handle(IncomingKafkaRecord<K, V> record) {
-        TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
-        if (checkpointStateMap.containsKey(tp)) {
-            ProcessingState<?> newState = CheckpointMetadata.getNextState(record);
-            boolean persist = isPersist(record);
-            if (!ProcessingState.isEmptyOrNull(newState)) {
-                return Uni.createFrom().item(newState)
-                        .emitOn(this::runOnContext) // state map is accessed on the captured context
-                        .onItem().transform(state -> checkpointStateMap.compute(tp,
-                                (t, s) -> (s != null) ? s.withNewState(state) : new CheckpointState(state)))
-                        .onItem().invoke(s -> s.processedRecord())
-                        .chain(s -> persist ? this.persistProcessingState(Map.of(tp, s))
-                                : Uni.createFrom().voidItem())
-                        .emitOn(record::runOnMessageContext)
-                        .replaceWithVoid();
+        return Uni.createFrom().completionStage(VertxContext.runOnContext(context.getDelegate(), f -> {
+            TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
+            CheckpointState checkpointState = checkpointStateMap.get(tp);
+            if (checkpointState != null) {
+                ProcessingState<?> newState = CheckpointMetadata.getNextState(record);
+                checkpointState.processedRecord();
+                if (!ProcessingState.isEmptyOrNull(newState)) {
+                    checkpointState.withNewState(newState);
+                    if (isPersist(record)) {
+                        this.persistProcessingState(Map.of(tp, checkpointState))
+                                .emitOn(record::runOnMessageContext)
+                                .subscribe().with(unused -> f.complete(null), f::completeExceptionally);
+                        return;
+                    }
+                }
             } else {
-                return Uni.createFrom().voidItem()
-                        .emitOn(this::runOnContext)
-                        .onItem().invoke(() -> checkpointStateMap.get(tp).processedRecord())
-                        .emitOn(record::runOnMessageContext);
+                log.acknowledgementFromRevokedTopicPartition(record.getOffset(), tp, consumerId, checkpointStateMap.keySet());
             }
-        } else {
-            log.acknowledgementFromRevokedTopicPartition(record.getOffset(), tp, consumerId, checkpointStateMap.keySet());
-        }
-        return Uni.createFrom().voidItem();
+            record.runOnMessageContext(() -> f.complete(null));
+        }));
     }
 
     @Override
     public void terminate(boolean graceful) {
         // TODO wait for processing when graceful
-        removeFromState(checkpointStateMap.keySet())
-                .onItem().invoke(this::stopFlushAndCheckHealthTimer)
-                .chain(this::persistProcessingState)
+        Map<TopicPartition, CheckpointState> removed = removeFromState(checkpointStateMap.keySet());
+        persistProcessingState(removed)
+                .onItemOrFailure().invoke(this::stopFlushAndCheckHealthTimer)
+                .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
         stateStore.close();
     }
 
-    private Uni<Map<TopicPartition, CheckpointState>> initState(Collection<TopicPartition> partitions) {
-        return Uni.createFrom().item(partitions)
-                .onItem().transform(p -> {
-                    p.forEach(tp -> checkpointStateMap.putIfAbsent(tp, new CheckpointState()));
-                    return checkpointStateMap;
-                }).runSubscriptionOn(this::runOnContext); // state map is accessed on the captured context
-    }
-
     @Override
     public void partitionsAssigned(Collection<TopicPartition> partitions) {
-        Map<TopicPartition, ? extends ProcessingState<?>> fetchedStates = initState(partitions)
-                .onItem().invoke(this::stopFlushAndCheckHealthTimer)
-                .chain(map -> stateStore.fetchProcessingState(partitions)
-                        .onItem().invoke(fetched ->
-                                log.checkpointPartitionsAssigned(consumerId, partitions, fetched.toString()))
-                        .onFailure().invoke(f -> log.failedCheckpointPartitionsAssigned(consumerId, partitions, f))
-                        .emitOn(this::runOnContext) // state map is accessed on the captured context
-                        .onItem().invoke(fetched -> {
-                            for (Map.Entry<TopicPartition, ProcessingState<?>> entry : fetched.entrySet()) {
-                                ProcessingState<?> state = entry.getValue();
-                                if (!ProcessingState.isEmptyOrNull(state)) {
-                                    map.compute(entry.getKey(),
-                                            (tp, s) -> (s != null) ? s.withNewState(state) : new CheckpointState(state));
-                                }
-                            }
-                        }))
-                .emitOn(this::runOnContext)
-                .onItem().invoke(this::startFlushAndCheckHealthTimer)
+        stopFlushAndCheckHealthTimer();
+        Map<TopicPartition, ProcessingState<?>> fetchedStates = stateStore.fetchProcessingState(partitions)
+                .onItem().invoke(fetched ->
+                        log.checkpointPartitionsAssigned(consumerId, partitions, fetched.toString()))
+                .onFailure().invoke(f ->
+                        log.failedCheckpointPartitionsAssigned(consumerId, partitions, f))
+                .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
+
+        runOnContextAndAwait(() -> {
+            for (TopicPartition tp : partitions) {
+                ProcessingState<?> state = fetchedStates.get(tp);
+                checkpointStateMap.put(tp, ProcessingState.isEmptyOrNull(state) ? new CheckpointState() : new CheckpointState(state));
+            }
+            startFlushAndCheckHealthTimer();
+            return null;
+        });
         Consumer<?, ?> kafkaConsumer = consumer.unwrap();
         for (Map.Entry<TopicPartition, ? extends ProcessingState<?>> entry : fetchedStates.entrySet()) {
             ProcessingState<?> state = entry.getValue();
@@ -257,30 +242,27 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         }
     }
 
-    private Uni<Map<TopicPartition, CheckpointState>> removeFromState(Collection<TopicPartition> partitions) {
-        return Uni.createFrom().item(partitions)
-                .onItem().transform(tp -> {
-                    Map<TopicPartition, CheckpointState> toRemove = new HashMap<>();
-                    tp.forEach(p -> {
-                        CheckpointState removed = checkpointStateMap.remove(p);
-                        if (removed != null) {
-                            toRemove.put(p, removed);
-                        }
-                    });
-                    return toRemove;
-                }).runSubscriptionOn(this::runOnContext); // state map is accessed on the captured context
+    private Map<TopicPartition, CheckpointState> removeFromState(Collection<TopicPartition> partitions) {
+        return runOnContextAndAwait(() -> {
+            stopFlushAndCheckHealthTimer();
+            Map<TopicPartition, CheckpointState> toRemove = new HashMap<>(checkpointStateMap);
+            checkpointStateMap.keySet().removeAll(partitions);
+            return toRemove;
+        });
     }
 
     @Override
     public void partitionsRevoked(Collection<TopicPartition> partitions) {
-        removeFromState(partitions)
-                .onItem()
-                .invoke(map -> log.checkpointPartitionsRevoked(consumerId, partitions, map.toString()))
-                .onItem().invoke(this::stopFlushAndCheckHealthTimer)
-                .chain(this::persistProcessingState)
-                .emitOn(this::runOnContext)
-                .onItem().invoke(this::startFlushAndCheckHealthTimer)
+        stopFlushAndCheckHealthTimer();
+        Map<TopicPartition, CheckpointState> revoked = removeFromState(partitions);
+
+        log.checkpointPartitionsRevoked(consumerId, partitions, revoked.toString());
+
+        persistProcessingState(revoked)
+                .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
+
+        runOnContext(this::startFlushAndCheckHealthTimer);
     }
 
     Uni<Void> persistProcessingState(Map<TopicPartition, CheckpointState> stateMap) {
@@ -403,8 +385,8 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
             return persistedAt;
         }
 
-        public AtomicInteger getUnprocessedRecords() {
-            return unprocessedRecords;
+        public int getUnprocessedRecords() {
+            return unprocessedRecords.get();
         }
 
         public void processedRecord() {
