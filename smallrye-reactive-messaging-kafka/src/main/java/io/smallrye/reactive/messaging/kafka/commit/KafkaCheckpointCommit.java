@@ -207,13 +207,38 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
 
     @Override
     public void terminate(boolean graceful) {
-        // TODO wait for processing when graceful
+        if (graceful) {
+            long stillUnprocessed = waitForProcessing();
+            if (stillUnprocessed > 0) {
+                log.messageStillUnprocessedAfterTimeout(stillUnprocessed);
+            }
+        }
+
         Map<TopicPartition, CheckpointState> removed = removeFromState(checkpointStateMap.keySet());
         persistProcessingState(removed)
                 .onItemOrFailure().invoke(this::stopFlushAndCheckHealthTimer)
                 .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
         stateStore.close();
+    }
+
+    private long waitForProcessing() {
+        int attempt = autoCommitInterval / 100;
+        for (int i = 0; i < attempt; i++) {
+            long sum = checkpointStateMap.values().stream().map(CheckpointState::getUnprocessedRecords).mapToInt(l -> l).sum();
+            if (sum == 0) {
+                return sum;
+            }
+            log.waitingForMessageProcessing(sum);
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        return checkpointStateMap.values().stream().map(CheckpointState::getUnprocessedRecords).mapToInt(l -> l).sum();
     }
 
     @Override
