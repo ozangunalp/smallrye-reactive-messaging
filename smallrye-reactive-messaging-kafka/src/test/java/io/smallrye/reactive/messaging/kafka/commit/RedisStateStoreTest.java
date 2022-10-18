@@ -441,6 +441,10 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
                 .arg(JsonObject.of("offset", 500, "state", sum(500)).toBuffer().toString()))
                 .await().indefinitely();
 
+        int expected = 1000;
+        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, Integer.toString(i), i), expected)
+                .awaitCompletion(Duration.ofMinutes(1));
+
         MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
                 .with("group.id", groupId)
                 .with("topic", topic)
@@ -452,13 +456,9 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
 
         RemoteStoringBean application = runApplication(config, RemoteStoringBean.class);
 
-        int expected = 1000;
-        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, Integer.toString(i), i), expected)
-                .awaitCompletion(Duration.ofMinutes(1));
-
         await()
                 .atMost(1, TimeUnit.MINUTES)
-                .until(() -> application.count() >= expected);
+                .until(() -> application.count() >= 500);
 
         checkOffsetSum(expected);
     }
