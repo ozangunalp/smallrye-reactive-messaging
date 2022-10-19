@@ -9,7 +9,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.eclipse.microprofile.reactive.messaging.Message;
 
 /**
- * Default implementation for {@link CheckpointMetadata}
+ * Default implementation of {@link CheckpointMetadata}
  *
  * @param <T> type of the processing state
  */
