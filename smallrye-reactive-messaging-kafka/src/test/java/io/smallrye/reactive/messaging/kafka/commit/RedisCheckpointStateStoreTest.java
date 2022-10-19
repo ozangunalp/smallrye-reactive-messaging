@@ -26,6 +26,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.IntegerDeserializer;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Message;
+import org.eclipse.microprofile.reactive.messaging.spi.ConnectorLiteral;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -328,7 +329,7 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
         try {
             redis.close();
 
-            companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic,i + 100), 100)
+            companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, i + 100), 100)
                     .awaitCompletion(Duration.ofMinutes(1));
 
             await().until(() -> !getHealth().getLiveness().isOk());
@@ -432,6 +433,38 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
         await()
                 .atMost(1, TimeUnit.MINUTES)
                 .until(() -> application.count() >= 500);
+
+        checkOffsetSum(expected);
+    }
+
+    @Test
+    public void testWaitAfterAssignment() {
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+
+        companion.topics().createAndWait(topic, 1);
+        String groupId = UUID.randomUUID().toString();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("auto.offset.reset", "earliest")
+                .with("commit-strategy", "checkpoint")
+                .with("checkpoint.state-store", "redis")
+                .with("checkpoint.unpersisted-state-max-age.ms", 300)
+                .with("auto.commit.interval.ms", 200)
+                .with("checkpoint.redis.connectionString", getRedisString())
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        RemoteStoringBean application = runApplication(config, RemoteStoringBean.class);
+
+        // consumer assigned partitions but receives no records
+        await().pollDelay(500, TimeUnit.MILLISECONDS).until(() -> true);
+
+        int expected = 100;
+        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, i), expected)
+                .awaitCompletion(Duration.ofMinutes(1));
+
+        await().until(() -> application.count() >= expected);
 
         checkOffsetSum(expected);
     }
