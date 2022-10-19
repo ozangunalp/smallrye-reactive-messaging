@@ -1,6 +1,5 @@
 package io.smallrye.reactive.messaging.kafka.commit;
 
-import static io.smallrye.reactive.messaging.kafka.commit.CheckpointMetadata.isPersist;
 import static io.smallrye.reactive.messaging.kafka.i18n.KafkaLogging.log;
 
 import java.time.Duration;
@@ -172,7 +171,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
             CheckpointState state = checkpointStateMap.get(tp);
             if (state != null) {
                 state.receivedRecord();
-                record.injectMetadata(new CheckpointMetadata<>(tp, record.getOffset(), state));
+                record.injectMetadata(new DefaultCheckpointMetadata<>(tp, record.getOffset(), state));
             }
             if (timerId < 0) {
                 startFlushAndCheckHealthTimer();
@@ -186,12 +185,13 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         return Uni.createFrom().completionStage(VertxContext.runOnContext(context.getDelegate(), f -> {
             TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
             CheckpointState checkpointState = checkpointStateMap.get(tp);
-            if (CheckpointMetadata.fromMessage(record).getCheckpointState().equals(checkpointState)) {
-                ProcessingState<?> newState = CheckpointMetadata.getNextState(record);
+            DefaultCheckpointMetadata<?> metadata = DefaultCheckpointMetadata.fromMessage(record);
+            if (metadata != null && metadata.getCheckpointState().equals(checkpointState)) {
+                ProcessingState<?> newState = metadata.getNext().orElse(null);
                 checkpointState.processedRecord();
                 if (!ProcessingState.isEmptyOrNull(newState)) {
                     checkpointState.withNewState(newState);
-                    if (isPersist(record)) {
+                    if (metadata.isPersistOnAck()) {
                         this.persistProcessingState(Map.of(tp, checkpointState))
                                 .emitOn(record::runOnMessageContext)
                                 .subscribe().with(unused -> f.complete(null), f::completeExceptionally);
