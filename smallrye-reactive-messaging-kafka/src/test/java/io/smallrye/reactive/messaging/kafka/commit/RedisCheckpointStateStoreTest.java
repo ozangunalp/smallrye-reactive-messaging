@@ -130,8 +130,6 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
                 .with("commit-strategy", "checkpoint")
                 .with("checkpoint.state-store", "redis")
                 .with("checkpoint.redis.connectionString", getRedisString())
-                .with("checkpoint.redis.maxPoolSize", 30)
-                .with("checkpoint.redis.maxWaitingHandlers", 1024)
                 .with("value.deserializer", IntegerDeserializer.class.getName());
         KafkaConnectorIncomingConfiguration ic = new KafkaConnectorIncomingConfiguration(config);
 
@@ -211,8 +209,6 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
                 .with("commit-strategy", "checkpoint")
                 .with("checkpoint.state-store", "redis")
                 .with("checkpoint.redis.connectionString", getRedisString())
-                .with("checkpoint.redis.maxPoolSize", 30)
-                .with("checkpoint.redis.maxWaitingHandlers", 1024)
                 .with("value.deserializer", IntegerDeserializer.class.getName());
 
         RemoteStoringBean application = runApplication(config, RemoteStoringBean.class);
@@ -248,8 +244,6 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
                 .with("checkpoint.state-store", "redis")
                 .with("checkpoint.unpersisted-state-max-age.ms", 60000)
                 .with("checkpoint.redis.connectionString", getRedisString())
-                .with("checkpoint.redis.maxPoolSize", 30)
-                .with("checkpoint.redis.maxWaitingHandlers", 1024)
                 .with("value.deserializer", IntegerDeserializer.class.getName());
 
         RemoteStoringBlockingBean application = runApplication(config, RemoteStoringBlockingBean.class);
@@ -284,8 +278,6 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
                 .with("commit-strategy", "checkpoint")
                 .with("checkpoint.state-store", "redis")
                 .with("checkpoint.redis.connectionString", getRedisString())
-                .with("checkpoint.redis.maxPoolSize", 30)
-                .with("checkpoint.redis.maxWaitingHandlers", 1024)
                 .with("value.deserializer", IntegerDeserializer.class.getName());
 
         LocalStoringBean application = runApplication(config, LocalStoringBean.class);
@@ -309,13 +301,11 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
     public void testStoreLocallyLastStateStoredTooLongAgo() {
         addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
-        companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
 
         MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
                 .with("group.id", groupId)
                 .with("topic", topic)
-                .with("partitions", 3)
                 .with("auto.offset.reset", "earliest")
                 .with("commit-strategy", "checkpoint")
                 .with("max.poll.records", 10)
@@ -323,18 +313,13 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
                 .with("checkpoint.state-store", "redis")
                 .with("auto.commit.interval.ms", 500)
                 .with("checkpoint.redis.connectionString", getRedisString())
-                .with("checkpoint.redis.maxPoolSize", 30)
-                .with("checkpoint.redis.maxWaitingHandlers", 1024)
                 .with("value.deserializer", IntegerDeserializer.class.getName());
 
         LocalStoringBean application = runApplication(config, LocalStoringBean.class);
 
         int expected = 100;
-        Random random = new Random();
-        companion.produceIntegers().usingGenerator(i -> {
-            int p = random.nextInt(3);
-            return new ProducerRecord<>(topic, p, Integer.toString(p), i);
-        }, expected).awaitCompletion(Duration.ofMinutes(1));
+        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, i), expected)
+                .awaitCompletion(Duration.ofMinutes(1));
 
         await().until(() -> application.count() >= expected);
 
@@ -343,10 +328,8 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
         try {
             redis.close();
 
-            companion.produceIntegers().usingGenerator(i -> {
-                int p = random.nextInt(3);
-                return new ProducerRecord<>(topic, p, Integer.toString(p + 100), i + 100);
-            }, 100).awaitCompletion(Duration.ofMinutes(1));
+            companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic,i + 100), 100)
+                    .awaitCompletion(Duration.ofMinutes(1));
 
             await().until(() -> !getHealth().getLiveness().isOk());
         } finally {
@@ -359,13 +342,10 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
     public void testFailedFetchStateOnPartitionsAssigned() {
         addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
-        companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
 
         MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
                 .with("group.id", groupId)
-                .with("topic", topic)
-                .with("partitions", 3)
                 .with("auto.offset.reset", "earliest")
                 .with("commit-strategy", "checkpoint")
                 .with("max.poll.records", 10)
@@ -373,8 +353,6 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
                 .with("checkpoint.state-store", "redis")
                 .with("auto.commit.interval.ms", 500)
                 .with("checkpoint.redis.connectionString", getRedisString())
-                .with("checkpoint.redis.maxPoolSize", 30)
-                .with("checkpoint.redis.maxWaitingHandlers", 1024)
                 .with("value.deserializer", IntegerDeserializer.class.getName());
 
         LocalStoringBean application = runApplication(config, LocalStoringBean.class);
@@ -383,11 +361,8 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
             redis.close();
 
             int expected = 100;
-            Random random = new Random();
-            companion.produceIntegers().usingGenerator(i -> {
-                int p = random.nextInt(3);
-                return new ProducerRecord<>(topic, p, Integer.toString(p), i);
-            }, expected).awaitCompletion(Duration.ofMinutes(1));
+            companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, i), expected)
+                    .awaitCompletion(Duration.ofMinutes(1));
 
             await().until(() -> application.count() == 0);
         } finally {
@@ -414,13 +389,11 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
                 .with("checkpoint.state-store", "redis")
                 .with("auto.commit.interval.ms", 500)
                 .with("checkpoint.redis.connectionString", getRedisString())
-                .with("checkpoint.redis.maxPoolSize", 30)
-                .with("checkpoint.redis.maxWaitingHandlers", 1024)
                 .with("value.deserializer", IntegerDeserializer.class.getName());
 
-        FailingBean application = runApplication(config, FailingBean.class);
+        runApplication(config, FailingBean.class);
 
-        int expected = 100;
+        int expected = 10;
         Random random = new Random();
         companion.produceIntegers().usingGenerator(i -> {
             int p = random.nextInt(3);
