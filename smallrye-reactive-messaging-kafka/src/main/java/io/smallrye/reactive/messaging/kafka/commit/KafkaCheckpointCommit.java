@@ -26,6 +26,7 @@ import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.kafka.IncomingKafkaRecord;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
 import io.smallrye.reactive.messaging.kafka.KafkaConsumer;
+import io.smallrye.reactive.messaging.kafka.impl.TopicPartitions;
 import io.smallrye.reactive.messaging.providers.helpers.VertxContext;
 import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.mutiny.core.Vertx;
@@ -165,7 +166,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
     @Override
     public <K, V> Uni<IncomingKafkaRecord<K, V>> received(IncomingKafkaRecord<K, V> record) {
         return Uni.createFrom().completionStage(VertxContext.runOnContext(context.getDelegate(), f -> {
-            TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
+            TopicPartition tp = TopicPartitions.getTopicPartition(record);
             CheckpointState state = checkpointStateMap.get(tp);
             if (state != null) {
                 state.receivedRecord();
@@ -181,7 +182,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
     @Override
     public <K, V> Uni<Void> handle(IncomingKafkaRecord<K, V> record) {
         return Uni.createFrom().completionStage(VertxContext.runOnContext(context.getDelegate(), f -> {
-            TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
+            TopicPartition tp = TopicPartitions.getTopicPartition(record);
             CheckpointState checkpointState = checkpointStateMap.get(tp);
             DefaultCheckpointMetadata<?> metadata = DefaultCheckpointMetadata.fromMessage(record);
             if (metadata != null && metadata.getCheckpointState().equals(checkpointState)) {

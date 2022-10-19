@@ -23,6 +23,7 @@ import io.smallrye.reactive.messaging.kafka.fault.KafkaFailStop;
 import io.smallrye.reactive.messaging.kafka.fault.KafkaFailureHandler;
 import io.smallrye.reactive.messaging.kafka.fault.KafkaIgnoreFailure;
 import io.smallrye.reactive.messaging.kafka.impl.KafkaClientServiceImpl;
+import io.smallrye.reactive.messaging.kafka.impl.TopicPartitions;
 import io.smallrye.reactive.messaging.kafka.transactions.KafkaTransactionsFactory;
 import io.smallrye.reactive.messaging.providers.MediatorFactory;
 import io.smallrye.reactive.messaging.providers.connectors.ExecutionHolder;
@@ -108,7 +109,7 @@ public class WeldTestBase {
         }
         // Release the config objects
         SmallRyeConfigProviderResolver.instance().releaseConfig(ConfigProvider.getConfig());
-        KafkaThrottledLatestProcessedCommit.clearCache();
+        TopicPartitions.clearCache();
     }
 
     public BeanManager getBeanManager() {
