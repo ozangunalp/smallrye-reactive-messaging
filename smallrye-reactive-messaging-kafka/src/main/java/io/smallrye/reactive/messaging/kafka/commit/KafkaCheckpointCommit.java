@@ -8,7 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 
 import javax.enterprise.context.ApplicationScoped;
@@ -223,7 +223,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
     private long waitForProcessing() {
         int attempt = autoCommitInterval / 100;
         for (int i = 0; i < attempt; i++) {
-            long sum = checkpointStateMap.values().stream().map(CheckpointState::getUnprocessedRecords).mapToInt(l -> l).sum();
+            long sum = checkpointStateMap.values().stream().map(CheckpointState::getUnprocessedRecords).mapToLong(l -> l).sum();
             if (sum == 0) {
                 return sum;
             }
@@ -236,7 +236,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
             }
         }
 
-        return checkpointStateMap.values().stream().map(CheckpointState::getUnprocessedRecords).mapToInt(l -> l).sum();
+        return checkpointStateMap.values().stream().map(CheckpointState::getUnprocessedRecords).mapToLong(l -> l).sum();
     }
 
     @Override
@@ -371,19 +371,20 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
 
         private final TopicPartition topicPartition;
         private final long createdTimestamp;
-        private final AtomicInteger unprocessedRecords;
+        private final AtomicLong received;
+        private final AtomicLong processed;
         private ProcessingState<?> processingState;
         private OffsetPersistedAt persistedAt;
 
         private CheckpointState(TopicPartition topicPartition,
                 ProcessingState<?> processingState,
-                OffsetPersistedAt persistedAt,
-                AtomicInteger unprocessedRecords) {
+                OffsetPersistedAt persistedAt) {
             this.topicPartition = topicPartition;
             this.createdTimestamp = System.currentTimeMillis();
             this.processingState = processingState;
             this.persistedAt = persistedAt;
-            this.unprocessedRecords = unprocessedRecords;
+            this.processed = new AtomicLong(0);
+            this.received = new AtomicLong(0);
         }
 
         public CheckpointState(TopicPartition topicPartition) {
@@ -391,7 +392,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         }
 
         public CheckpointState(TopicPartition topicPartition, ProcessingState<?> processingState) {
-            this(topicPartition, processingState, OffsetPersistedAt.NOT_PERSISTED, new AtomicInteger(0));
+            this(topicPartition, processingState, OffsetPersistedAt.NOT_PERSISTED);
         }
 
         public CheckpointState withPersistedAt(OffsetPersistedAt offsetPersistedAt) {
@@ -416,21 +417,21 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
             return persistedAt;
         }
 
-        public int getUnprocessedRecords() {
-            return unprocessedRecords.get();
+        public void receivedRecord() {
+            received.incrementAndGet();
         }
 
         public void processedRecord() {
-            unprocessedRecords.decrementAndGet();
+            processed.incrementAndGet();
         }
 
-        public void receivedRecord() {
-            unprocessedRecords.incrementAndGet();
+        public long getUnprocessedRecords() {
+            return received.get() - processed.get();
         }
 
         public long millisSinceLastPersistedOffset() {
             // state never persisted, count the time passed since local state store
-            if (persistedAt.notPersisted()) {
+            if (persistedAt.notPersisted() && received.get() > 0) {
                 return System.currentTimeMillis() - createdTimestamp;
             } else if (hasNonpersistedOffset()) {
                 return System.currentTimeMillis() - persistedAt.getPersistedAt();
@@ -463,7 +464,8 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
             return "CheckpointState{" +
                     "topicPartition=" + topicPartition +
                     ", createdTimestamp=" + createdTimestamp +
-                    ", unprocessedRecords=" + unprocessedRecords +
+                    ", received=" + received +
+                    ", processed=" + processed +
                     ", processingState=" + processingState +
                     ", persistedAt=" + persistedAt +
                     '}';
