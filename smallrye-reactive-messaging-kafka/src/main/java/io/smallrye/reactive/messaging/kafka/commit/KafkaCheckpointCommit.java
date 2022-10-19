@@ -172,7 +172,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
             CheckpointState state = checkpointStateMap.get(tp);
             if (state != null) {
                 state.receivedRecord();
-                record.injectMetadata(new CheckpointMetadata<>(tp, record.getOffset(), state::getProcessingState));
+                record.injectMetadata(new CheckpointMetadata<>(tp, record.getOffset(), state));
             }
             if (timerId < 0) {
                 startFlushAndCheckHealthTimer();
@@ -186,7 +186,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         return Uni.createFrom().completionStage(VertxContext.runOnContext(context.getDelegate(), f -> {
             TopicPartition tp = new TopicPartition(record.getTopic(), record.getPartition());
             CheckpointState checkpointState = checkpointStateMap.get(tp);
-            if (checkpointState != null) {
+            if (CheckpointMetadata.fromMessage(record).getCheckpointState().equals(checkpointState)) {
                 ProcessingState<?> newState = CheckpointMetadata.getNextState(record);
                 checkpointState.processedRecord();
                 if (!ProcessingState.isEmptyOrNull(newState)) {
@@ -245,17 +245,16 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
     public void partitionsAssigned(Collection<TopicPartition> partitions) {
         stopFlushAndCheckHealthTimer();
         Map<TopicPartition, ProcessingState<?>> fetchedStates = stateStore.fetchProcessingState(partitions)
-                .onItem().invoke(fetched ->
-                        log.checkpointPartitionsAssigned(consumerId, partitions, fetched.toString()))
-                .onFailure().invoke(f ->
-                        log.failedCheckpointPartitionsAssigned(consumerId, partitions, f))
+                .onItem().invoke(fetched -> log.checkpointPartitionsAssigned(consumerId, partitions, fetched.toString()))
+                .onFailure().invoke(f -> log.failedCheckpointPartitionsAssigned(consumerId, partitions, f))
                 .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
 
         runOnContextAndAwait(() -> {
             for (TopicPartition tp : partitions) {
                 ProcessingState<?> state = fetchedStates.get(tp);
-                checkpointStateMap.put(tp, ProcessingState.isEmptyOrNull(state) ? new CheckpointState() : new CheckpointState(state));
+                checkpointStateMap.put(tp,
+                        ProcessingState.isEmptyOrNull(state) ? new CheckpointState(tp) : new CheckpointState(tp, state));
             }
             startFlushAndCheckHealthTimer();
             return null;
@@ -371,25 +370,30 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
     }
 
     static class CheckpointState {
+
+        private final TopicPartition topicPartition;
         private final long createdTimestamp;
         private final AtomicInteger unprocessedRecords;
         private ProcessingState<?> processingState;
         private OffsetPersistedAt persistedAt;
 
-        private CheckpointState(ProcessingState<?> processingState, OffsetPersistedAt persistedAt,
+        private CheckpointState(TopicPartition topicPartition,
+                ProcessingState<?> processingState,
+                OffsetPersistedAt persistedAt,
                 AtomicInteger unprocessedRecords) {
+            this.topicPartition = topicPartition;
             this.createdTimestamp = System.currentTimeMillis();
             this.processingState = processingState;
             this.persistedAt = persistedAt;
             this.unprocessedRecords = unprocessedRecords;
         }
 
-        public CheckpointState() {
-            this(ProcessingState.EMPTY_STATE);
+        public CheckpointState(TopicPartition topicPartition) {
+            this(topicPartition, ProcessingState.EMPTY_STATE);
         }
 
-        public CheckpointState(ProcessingState<?> processingState) {
-            this(processingState, OffsetPersistedAt.NOT_PERSISTED, new AtomicInteger(0));
+        public CheckpointState(TopicPartition topicPartition, ProcessingState<?> processingState) {
+            this(topicPartition, processingState, OffsetPersistedAt.NOT_PERSISTED, new AtomicInteger(0));
         }
 
         public CheckpointState withPersistedAt(OffsetPersistedAt offsetPersistedAt) {
@@ -400,6 +404,10 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         public CheckpointState withNewState(ProcessingState<?> state) {
             this.processingState = state;
             return this;
+        }
+
+        public TopicPartition getTopicPartition() {
+            return topicPartition;
         }
 
         public ProcessingState<?> getProcessingState() {
@@ -423,7 +431,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         }
 
         public long millisSinceLastPersistedOffset() {
-            // state never persisted, count the
+            // state never persisted, count the time passed since local state store
             if (persistedAt.notPersisted()) {
                 return System.currentTimeMillis() - createdTimestamp;
             } else if (hasNonpersistedOffset()) {
@@ -438,11 +446,28 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         }
 
         @Override
+        public boolean equals(Object o) {
+            if (this == o)
+                return true;
+            if (o == null || getClass() != o.getClass())
+                return false;
+            CheckpointState that = (CheckpointState) o;
+            return createdTimestamp == that.createdTimestamp && topicPartition.equals(that.topicPartition);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(topicPartition, createdTimestamp);
+        }
+
+        @Override
         public String toString() {
             return "CheckpointState{" +
-                    "processingState=" + processingState +
-                    ", persistedAt=" + persistedAt +
+                    "topicPartition=" + topicPartition +
+                    ", createdTimestamp=" + createdTimestamp +
                     ", unprocessedRecords=" + unprocessedRecords +
+                    ", processingState=" + processingState +
+                    ", persistedAt=" + persistedAt +
                     '}';
         }
     }

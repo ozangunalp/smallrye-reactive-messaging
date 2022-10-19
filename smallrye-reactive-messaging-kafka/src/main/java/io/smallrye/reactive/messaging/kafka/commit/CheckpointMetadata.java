@@ -4,7 +4,6 @@ import static io.smallrye.reactive.messaging.kafka.i18n.KafkaLogging.log;
 
 import java.util.Optional;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 import org.apache.kafka.common.TopicPartition;
 import org.eclipse.microprofile.reactive.messaging.Message;
@@ -34,7 +33,7 @@ public class CheckpointMetadata<T> {
 
     private final TopicPartition topicPartition;
     private final long recordOffset;
-    private final Supplier<ProcessingState<T>> currentSupplier;
+    private final KafkaCheckpointCommit.CheckpointState checkpointState;
     private ProcessingState<T> next;
     private boolean persistOnAck;
 
@@ -53,10 +52,15 @@ public class CheckpointMetadata<T> {
         return (CheckpointMetadata<S>) message.getMetadata(CheckpointMetadata.class).orElse(null);
     }
 
-    public CheckpointMetadata(TopicPartition topicPartition, long recordOffset, Supplier<ProcessingState<T>> stateSupplier) {
+    public CheckpointMetadata(TopicPartition topicPartition, long recordOffset,
+            KafkaCheckpointCommit.CheckpointState checkpointState) {
         this.topicPartition = topicPartition;
         this.recordOffset = recordOffset;
-        this.currentSupplier = stateSupplier;
+        this.checkpointState = checkpointState;
+    }
+
+    KafkaCheckpointCommit.CheckpointState getCheckpointState() {
+        return checkpointState;
     }
 
     public TopicPartition getTopicPartition() {
@@ -72,7 +76,7 @@ public class CheckpointMetadata<T> {
     }
 
     public Optional<ProcessingState<T>> getCurrent() {
-        return Optional.ofNullable(currentSupplier.get());
+        return Optional.ofNullable((ProcessingState<T>) checkpointState.getProcessingState());
     }
 
     public Optional<ProcessingState<T>> getNext() {
@@ -98,7 +102,8 @@ public class CheckpointMetadata<T> {
     }
 
     public T transform(T initialState, Function<T, T> transformation, boolean persistOnAck) {
-        ProcessingState<T> processingState = ProcessingState.getOrDefault(currentSupplier.get(), initialState);
+        ProcessingState<T> processingState = ProcessingState
+                .getOrDefault((ProcessingState<T>) checkpointState.getProcessingState(), initialState);
         if (recordOffset >= processingState.getOffset()) {
             return setNext(transformation.apply(processingState.getState()), persistOnAck);
         } else {
