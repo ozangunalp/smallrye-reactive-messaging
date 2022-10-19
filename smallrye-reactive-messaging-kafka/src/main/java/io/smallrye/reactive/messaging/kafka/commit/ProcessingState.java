@@ -4,7 +4,7 @@ import java.util.Objects;
 
 /**
  * Checkpoint state associated with an offset.
- *
+ * <p>
  * This object can be used to persist the processing state per topic-partition into a state store.
  *
  * @param <T> type of the processing state

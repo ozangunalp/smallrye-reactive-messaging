@@ -51,7 +51,7 @@ import io.vertx.mutiny.redis.client.Request;
 import io.vertx.mutiny.redis.client.Response;
 import io.vertx.redis.client.RedisOptions;
 
-public class RedisStateStoreTest extends KafkaCompanionTestBase {
+public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
 
     private KafkaSource<String, Integer> source;
     private KafkaSource<String, Integer> source2;
@@ -136,7 +136,7 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
         KafkaConnectorIncomingConfiguration ic = new KafkaConnectorIncomingConfiguration(config);
 
         SingletonInstance<KafkaCommitHandler.Factory> checkpointFactory = new SingletonInstance<>("checkpoint",
-                new KafkaCheckpointCommit.Factory(new SingletonInstance<>("redis", new RedisStateStore.Factory())));
+                new KafkaCheckpointCommit.Factory(new SingletonInstance<>("redis", new RedisCheckpointStateStore.Factory())));
         source = new KafkaSource<>(vertx,
                 "test-source-with-auto-commit-enabled",
                 ic,
@@ -198,7 +198,7 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
 
     @Test
     public void testWithPartitions() {
-        addBeans(RedisStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
@@ -234,7 +234,7 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
 
     @Test
     public void testWithPartitionsBlocking() {
-        addBeans(RedisStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
@@ -271,7 +271,7 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
 
     @Test
     public void testWithPartitionsStoreLocally() {
-        addBeans(RedisStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
@@ -307,7 +307,7 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
 
     @Test
     public void testStoreLocallyLastStateStoredTooLongAgo() {
-        addBeans(RedisStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
@@ -357,7 +357,7 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
 
     @Test
     public void testFailedFetchStateOnPartitionsAssigned() {
-        addBeans(RedisStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
@@ -397,7 +397,7 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
 
     @Test
     public void testFailingBeanWithIgnoredFailure() {
-        addBeans(RedisStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
@@ -432,7 +432,7 @@ public class RedisStateStoreTest extends KafkaCompanionTestBase {
 
     @Test
     public void testWithPreviousState() {
-        addBeans(RedisStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         String groupId = UUID.randomUUID().toString();
 

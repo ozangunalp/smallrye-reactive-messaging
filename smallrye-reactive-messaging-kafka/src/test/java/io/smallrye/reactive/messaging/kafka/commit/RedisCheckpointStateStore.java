@@ -1,6 +1,5 @@
 package io.smallrye.reactive.messaging.kafka.commit;
 
-import static io.smallrye.reactive.messaging.kafka.commit.KafkaCheckpointCommit.CHECKPOINT_COMMIT_NAME;
 import static io.vertx.mutiny.redis.client.Request.cmd;
 
 import java.util.ArrayList;
@@ -35,7 +34,7 @@ import io.vertx.mutiny.redis.client.Response;
 import io.vertx.redis.client.RedisOptions;
 import io.vertx.redis.client.RedisOptionsConverter;
 
-public class RedisStateStore implements StateStore {
+public class RedisCheckpointStateStore implements CheckpointStateStore {
 
     public static final String STATE_STORE_NAME = "redis";
     protected KafkaLogging log = Logger.getMessageLogger(KafkaLogging.class, "io.smallrye.reactive.messaging.kafka");
@@ -43,7 +42,7 @@ public class RedisStateStore implements StateStore {
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final Redis redis;
 
-    public RedisStateStore(Redis redis) {
+    public RedisCheckpointStateStore(Redis redis) {
         this.redis = redis;
     }
 
@@ -61,17 +60,17 @@ public class RedisStateStore implements StateStore {
 
     @ApplicationScoped
     @Identifier(STATE_STORE_NAME)
-    public static class Factory implements StateStore.Factory {
+    public static class Factory implements CheckpointStateStore.Factory {
 
         @Override
-        public StateStore create(KafkaConnectorIncomingConfiguration config, Vertx vertx) {
+        public CheckpointStateStore create(KafkaConnectorIncomingConfiguration config, Vertx vertx) {
             JsonObject entries = JsonHelper.asJsonObject(config.config(),
-                    CHECKPOINT_COMMIT_NAME + "." + STATE_STORE_NAME + ".");
+                    KafkaCommitHandler.Strategy.CHECKPOINT + "." + STATE_STORE_NAME + ".");
             RedisOptions options = new RedisOptions();
             RedisOptionsConverter.fromJson(entries, options);
             Redis redis = Redis.createClient(vertx, options);
 
-            return new RedisStateStore(redis);
+            return new RedisCheckpointStateStore(redis);
         }
 
     }

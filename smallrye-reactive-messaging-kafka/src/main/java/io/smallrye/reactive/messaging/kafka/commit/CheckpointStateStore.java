@@ -12,17 +12,33 @@ import io.vertx.mutiny.core.Vertx;
 /**
  *
  */
-public interface StateStore {
+public interface CheckpointStateStore {
 
+    /**
+     *
+     * @param partitions
+     * @return
+     */
     Uni<Map<TopicPartition, ProcessingState<?>>> fetchProcessingState(Collection<TopicPartition> partitions);
 
+    /**
+     *
+     * @param state
+     * @return
+     */
     Uni<Void> persistProcessingState(Map<TopicPartition, ProcessingState<?>> state);
 
+    /**
+     *
+     */
     default void close() {
         // no implementation
     }
 
+    /**
+     *
+     */
     interface Factory {
-        StateStore create(KafkaConnectorIncomingConfiguration config, Vertx vertx);
+        CheckpointStateStore create(KafkaConnectorIncomingConfiguration config, Vertx vertx);
     }
 }

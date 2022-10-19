@@ -1,6 +1,5 @@
 package io.smallrye.reactive.messaging.kafka.commit;
 
-import static io.smallrye.reactive.messaging.kafka.commit.KafkaCheckpointCommit.CHECKPOINT_COMMIT_NAME;
 import static io.smallrye.reactive.messaging.kafka.i18n.KafkaLogging.log;
 
 import java.io.File;
@@ -24,25 +23,25 @@ import io.vertx.core.json.Json;
 import io.vertx.mutiny.core.Vertx;
 import io.vertx.mutiny.core.buffer.Buffer;
 
-public class FileStateStore implements StateStore {
+public class FileCheckpointStateStore implements CheckpointStateStore {
 
     public static final String STATE_STORE_NAME = "file";
     private final Vertx vertx;
     private final File stateDir;
 
-    public FileStateStore(Vertx vertx, File stateDir) {
+    public FileCheckpointStateStore(Vertx vertx, File stateDir) {
         this.vertx = vertx;
         this.stateDir = stateDir;
     }
 
     @ApplicationScoped
     @Identifier(STATE_STORE_NAME)
-    public static class Factory implements StateStore.Factory {
+    public static class Factory implements CheckpointStateStore.Factory {
 
         @Override
-        public StateStore create(KafkaConnectorIncomingConfiguration config, Vertx vertx) {
-            String dir = config.config().getValue(CHECKPOINT_COMMIT_NAME + "." + STATE_STORE_NAME + ".state-dir",
-                    String.class);
+        public CheckpointStateStore create(KafkaConnectorIncomingConfiguration config, Vertx vertx) {
+            String dir = config.config().getValue(
+                    KafkaCommitHandler.Strategy.CHECKPOINT + "." + STATE_STORE_NAME + ".state-dir", String.class);
             File stateDir;
             if (dir == null) {
                 try {
@@ -54,7 +53,7 @@ public class FileStateStore implements StateStore {
             } else {
                 stateDir = new File(dir);
             }
-            return new FileStateStore(vertx, stateDir);
+            return new FileCheckpointStateStore(vertx, stateDir);
         }
     }
 

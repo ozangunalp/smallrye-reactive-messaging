@@ -45,8 +45,6 @@ import io.vertx.mutiny.core.Vertx;
 @Experimental("Experimental API")
 public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitHandler {
 
-    public static final String CHECKPOINT_COMMIT_NAME = "checkpoint";
-
     private final Map<TopicPartition, CheckpointState> checkpointStateMap = new ConcurrentHashMap<>();
 
     private volatile long timerId = -1;
@@ -54,7 +52,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
     private final int autoCommitInterval;
 
     private final KafkaConsumer<?, ?> consumer;
-    private final StateStore stateStore;
+    private final CheckpointStateStore stateStore;
 
     private final BiConsumer<Throwable, Boolean> reportFailure;
     private final String consumerId;
@@ -62,7 +60,7 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
 
     public KafkaCheckpointCommit(Vertx vertx,
             KafkaConsumer<?, ?> consumer,
-            StateStore stateStore,
+            CheckpointStateStore stateStore,
             BiConsumer<Throwable, Boolean> reportFailure,
             int autoCommitInterval,
             int nonpersistedStateMaxAge,
@@ -82,13 +80,13 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
     }
 
     @ApplicationScoped
-    @Identifier(CHECKPOINT_COMMIT_NAME)
+    @Identifier(Strategy.CHECKPOINT)
     public static class Factory implements KafkaCommitHandler.Factory {
 
-        Instance<StateStore.Factory> stateStoreFactory;
+        Instance<CheckpointStateStore.Factory> stateStoreFactory;
 
         @Inject
-        public Factory(@Any Instance<StateStore.Factory> stateStoreFactory) {
+        public Factory(@Any Instance<CheckpointStateStore.Factory> stateStoreFactory) {
             this.stateStoreFactory = stateStoreFactory;
         }
 
@@ -107,8 +105,8 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
                 log.checkpointDefaultStateStore();
                 return "file";
             });
-            StateStore.Factory factory = stateStoreFactory.select(Identifier.Literal.of(stateStoreIdentifier)).get();
-            StateStore stateStore = factory.create(config, vertx);
+            CheckpointStateStore.Factory factory = stateStoreFactory.select(Identifier.Literal.of(stateStoreIdentifier)).get();
+            CheckpointStateStore stateStore = factory.create(config, vertx);
             return new KafkaCheckpointCommit(vertx, consumer, stateStore, reportFailure, autoCommitInterval,
                     config.getCheckpointUnpersistedStateMaxAgeMs(),
                     defaultTimeout);

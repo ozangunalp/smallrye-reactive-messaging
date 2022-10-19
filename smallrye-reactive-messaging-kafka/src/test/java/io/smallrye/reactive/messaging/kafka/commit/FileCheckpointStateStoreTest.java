@@ -41,7 +41,7 @@ import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
 import io.vertx.core.json.JsonObject;
 import io.vertx.mutiny.core.buffer.Buffer;
 
-public class FileStateStoreTest extends KafkaCompanionTestBase {
+public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
 
     private KafkaSource<String, Integer> source;
     private KafkaSource<String, Integer> source2;
@@ -105,7 +105,7 @@ public class FileStateStoreTest extends KafkaCompanionTestBase {
         KafkaConnectorIncomingConfiguration ic = new KafkaConnectorIncomingConfiguration(config);
 
         SingletonInstance<KafkaCommitHandler.Factory> checkpointFactory = new SingletonInstance<>("checkpoint",
-                new KafkaCheckpointCommit.Factory(new SingletonInstance<>("file", new FileStateStore.Factory())));
+                new KafkaCheckpointCommit.Factory(new SingletonInstance<>("file", new FileCheckpointStateStore.Factory())));
         source = new KafkaSource<>(vertx,
                 "test-source-with-auto-commit-enabled",
                 ic,
@@ -171,7 +171,7 @@ public class FileStateStoreTest extends KafkaCompanionTestBase {
     public void testWithPartitions(@TempDir File tempDir) {
         System.out.println(tempDir.getAbsolutePath());
 
-        addBeans(FileStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
@@ -232,7 +232,7 @@ public class FileStateStoreTest extends KafkaCompanionTestBase {
     public void testSelectiveCheckpoint(@TempDir File tempDir) {
         System.out.println(tempDir.getAbsolutePath());
 
-        addBeans(FileStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
         String groupId = UUID.randomUUID().toString();
