@@ -270,13 +270,13 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
             stopFlushAndCheckHealthTimer();
             Map<TopicPartition, CheckpointState> toRemove = new HashMap<>(checkpointStateMap);
             checkpointStateMap.keySet().removeAll(partitions);
+            toRemove.keySet().removeAll(partitions);
             return toRemove;
         });
     }
 
     @Override
     public void partitionsRevoked(Collection<TopicPartition> partitions) {
-        stopFlushAndCheckHealthTimer();
         Map<TopicPartition, CheckpointState> revoked = removeFromState(partitions);
 
         log.checkpointPartitionsRevoked(consumerId, partitions, revoked.toString());
@@ -362,8 +362,8 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         public LastStateStoredTooLongAgoException(TopicPartition topic, long time, long currentStateOffset,
                 long lastStoredOffset) {
             super(String.format("Latest processing state for topic-partition `%s` persisted %d seconds ago. " +
-                    "At the moment latest registered local processing state is for offset %d. " +
-                    "The last offset for which a state is successfully persisted was %d.",
+                            "At the moment latest registered local processing state is for offset %d. " +
+                            "The last offset for which a state is successfully persisted was %d.",
                     topic, time, currentStateOffset, lastStoredOffset));
         }
     }
