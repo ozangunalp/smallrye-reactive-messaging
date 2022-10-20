@@ -1,5 +1,6 @@
 package io.smallrye.reactive.messaging.kafka.commit;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import java.io.File;
@@ -16,7 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.util.stream.IntStream;
 
 import javax.enterprise.context.ApplicationScoped;
 
@@ -25,14 +26,16 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.IntegerDeserializer;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Message;
+import org.eclipse.microprofile.reactive.messaging.spi.ConnectorLiteral;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.annotations.Blocking;
 import io.smallrye.reactive.messaging.kafka.CountKafkaCdiEvents;
+import io.smallrye.reactive.messaging.kafka.KafkaConnector;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
-import io.smallrye.reactive.messaging.kafka.api.IncomingKafkaRecordMetadata;
 import io.smallrye.reactive.messaging.kafka.base.KafkaCompanionTestBase;
 import io.smallrye.reactive.messaging.kafka.base.SingletonInstance;
 import io.smallrye.reactive.messaging.kafka.base.UnsatisfiedInstance;
@@ -57,35 +60,28 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
     }
 
     private void checkOffsetSum(File tempDir, int sum) {
-        await().until(() -> {
-            List<JsonObject> states = Uni.join().all(Stream.of(0, 1, 2)
-                    .map(i -> tempDir.toPath().resolve(topic + "-" + i).toString())
-                    .map(path -> vertx.fileSystem().readFile(path)
-                            .map(Buffer::toJsonObject)
-                            .onFailure().recoverWithItem(JsonObject.of("offset", 0, "state", 0)))
-                    .collect(Collectors.toList()))
-                    .andFailFast()
-                    .await().indefinitely();
+        await().untilAsserted(() -> {
+            List<JsonObject> states = getStateFromStore(tempDir, 3);
 
             int offset = states.stream().mapToInt(tuple -> tuple.getInteger("offset")).sum();
             int state = states.stream().mapToInt(tuple -> tuple.getInteger("state")).sum();
+            System.out.println(states.stream().map(JsonObject::toString).collect(Collectors.joining(", "))
+                    + " : " + offset + " " + state);
 
-            return offset == sum && state == sum(sum);
+            assertThat(offset).isEqualTo(sum);
+            assertThat(state).isEqualTo(sum(sum));
         });
     }
 
-    private void checkOffsetSum(File tempDir, int partition, int sum) {
-        await().until(() -> {
-            JsonObject json = vertx.fileSystem().readFile(tempDir.toPath().resolve(topic + "-" + partition).toString())
-                    .map(Buffer::toJsonObject)
-                    .onFailure().recoverWithItem(JsonObject.of("offset", 0, "state", 0))
-                    .await().indefinitely();
-
-            int offset = json.getInteger("offset");
-            int state = json.getInteger("state");
-
-            return offset == sum && state == sum(sum);
-        });
+    private List<JsonObject> getStateFromStore(File tempDir, int partitions) {
+        return Uni.join().all(IntStream.range(0, partitions).boxed()
+                .map(i -> tempDir.toPath().resolve(topic + "-" + i).toString())
+                .map(path -> vertx.fileSystem().readFile(path)
+                        .map(Buffer::toJsonObject)
+                        .onFailure().recoverWithItem(JsonObject.of("offset", 0, "state", 0)))
+                .collect(Collectors.toList()))
+                .andFailFast()
+                .await().indefinitely();
     }
 
     private int sum(int sum) {
@@ -122,8 +118,7 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
             }
             messages.add(m);
             return Uni.createFrom().completionStage(m.ack());
-        }).subscribe().with(x -> {
-
+        }).subscribe().with(unused -> {
         });
 
         companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, Integer.toString(i), i), 100);
@@ -150,7 +145,6 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
             messages2.add(m);
             return Uni.createFrom().completionStage(m.ack());
         }).subscribe().with(x -> {
-
         });
 
         await().until(() -> !source2.getConsumer().getAssignments().await().indefinitely().isEmpty());
@@ -169,8 +163,6 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
 
     @Test
     public void testWithPartitions(@TempDir File tempDir) {
-        System.out.println(tempDir.getAbsolutePath());
-
         addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
 
         companion.topics().createAndWait(topic, 3);
@@ -182,11 +174,44 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
                 .with("partitions", 3)
                 .with("auto.offset.reset", "earliest")
                 .with("commit-strategy", "checkpoint")
-                .with("checkpoint.state-store", "file")
                 .with("checkpoint.file.state-dir", tempDir.getAbsolutePath())
                 .with("value.deserializer", IntegerDeserializer.class.getName());
 
-        StoringBean application = runApplication(config, StoringBean.class);
+        RemoteStoringBean application = runApplication(config, RemoteStoringBean.class);
+
+        int expected = 3000;
+        Random random = new Random();
+        companion.produceIntegers().usingGenerator(i -> {
+            int p = random.nextInt(3);
+            return new ProducerRecord<>(topic, p, Integer.toString(p), i);
+        }, expected).awaitCompletion(Duration.ofMinutes(1));
+
+        await()
+                .atMost(1, TimeUnit.MINUTES)
+                .until(() -> application.count() >= expected);
+        assertThat(application.getReceived().keySet()).hasSizeGreaterThanOrEqualTo(getMaxNumberOfEventLoop(3));
+
+        checkOffsetSum(tempDir, expected);
+    }
+
+    @Test
+    public void testWithPartitionsBlocking(@TempDir File tempDir) {
+        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+
+        companion.topics().createAndWait(topic, 3);
+        String groupId = UUID.randomUUID().toString();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("partitions", 3)
+                .with("auto.offset.reset", "earliest")
+                .with("commit-strategy", "checkpoint")
+                .with("checkpoint.file.state-dir", tempDir.getAbsolutePath())
+                .with("checkpoint.unpersisted-state-max-age.ms", 60000)
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        RemoteStoringBlockingBean application = runApplication(config, RemoteStoringBlockingBean.class);
 
         int expected = 1000;
         Random random = new Random();
@@ -195,14 +220,221 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
             return new ProducerRecord<>(topic, p, Integer.toString(p), i);
         }, expected).awaitCompletion(Duration.ofMinutes(1));
 
-        await().atMost(1, TimeUnit.MINUTES)
-                .until(() -> application.count() == expected);
+        await()
+                .atMost(1, TimeUnit.MINUTES)
+                .until(() -> application.count() >= expected);
+        assertThat(application.getReceived().keySet()).hasSizeGreaterThanOrEqualTo(getMaxNumberOfEventLoop(3));
 
         checkOffsetSum(tempDir, expected);
     }
 
+    @Test
+    public void testWithPartitionsStoreLocally(@TempDir File tempDir) {
+        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+
+        companion.topics().createAndWait(topic, 3);
+        String groupId = UUID.randomUUID().toString();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("partitions", 3)
+                .with("auto.offset.reset", "earliest")
+                .with("commit-strategy", "checkpoint")
+                .with("checkpoint.file.state-dir", tempDir.getAbsolutePath())
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        LocalStoringBean application = runApplication(config, LocalStoringBean.class);
+
+        int expected = 3000;
+        Random random = new Random();
+        companion.produceIntegers().usingGenerator(i -> {
+            int p = random.nextInt(3);
+            return new ProducerRecord<>(topic, p, Integer.toString(p), i);
+        }, expected).awaitCompletion(Duration.ofMinutes(1));
+
+        await()
+                .atMost(1, TimeUnit.MINUTES)
+                .until(() -> application.count() >= expected);
+        assertThat(application.getReceived().keySet()).hasSizeGreaterThanOrEqualTo(getMaxNumberOfEventLoop(3));
+
+        checkOffsetSum(tempDir, expected);
+    }
+
+    @Test
+    public void testFailingBeanWithIgnoredFailure(@TempDir File tempDir) {
+        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+
+        companion.topics().createAndWait(topic, 3);
+        String groupId = UUID.randomUUID().toString();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("partitions", 3)
+                .with("auto.offset.reset", "earliest")
+                .with("commit-strategy", "checkpoint")
+                .with("checkpoint.file.state-dir", tempDir.getAbsolutePath())
+                .with("failure-strategy", "ignore")
+                .with("max.poll.records", 10)
+                .with("checkpoint.unpersisted-state-max-age.ms", 600)
+                .with("auto.commit.interval.ms", 500)
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        runApplication(config, FailingBean.class);
+
+        int expected = 10;
+        Random random = new Random();
+        companion.produceIntegers().usingGenerator(i -> {
+            int p = random.nextInt(3);
+            return new ProducerRecord<>(topic, p, Integer.toString(p), i);
+        }, expected).awaitCompletion(Duration.ofMinutes(1));
+
+        await().until(() -> !getHealth().getLiveness().isOk());
+    }
+
+    @Test
+    public void testWithPreviousState(@TempDir File tempDir) {
+        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+
+        String groupId = UUID.randomUUID().toString();
+
+        vertx.fileSystem().writeFile(tempDir.toPath().resolve(topic + "-" + 0).toString(),
+                        Buffer.newInstance(JsonObject.of("offset", 500, "state", sum(500)).toBuffer()))
+                        .await().indefinitely();
+
+        int expected = 1000;
+        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, Integer.toString(i), i), expected)
+                .awaitCompletion(Duration.ofMinutes(1));
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("auto.offset.reset", "earliest")
+                .with("commit-strategy", "checkpoint")
+                .with("checkpoint.state-store", "file")
+                .with("checkpoint.file.state-dir", tempDir.getAbsolutePath())
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        RemoteStoringBean application = runApplication(config, RemoteStoringBean.class);
+
+        await()
+                .atMost(1, TimeUnit.MINUTES)
+                .until(() -> application.count() >= 500);
+
+        checkOffsetSum(tempDir, expected);
+    }
+
+    @Test
+    public void testWaitAfterAssignment(@TempDir File tempDir) {
+        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+
+        companion.topics().createAndWait(topic, 1);
+        String groupId = UUID.randomUUID().toString();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("auto.offset.reset", "earliest")
+                .with("commit-strategy", "checkpoint")
+                .with("checkpoint.file.state-dir", tempDir.getAbsolutePath())
+                .with("checkpoint.unpersisted-state-max-age.ms", 300)
+                .with("auto.commit.interval.ms", 200)
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        io.smallrye.reactive.messaging.kafka.commit.FileCheckpointStateStoreTest.RemoteStoringBean application = runApplication(config, io.smallrye.reactive.messaging.kafka.commit.FileCheckpointStateStoreTest.RemoteStoringBean.class);
+
+        // consumer assigned partitions but receives no records
+        await().pollDelay(500, TimeUnit.MILLISECONDS).until(() -> true);
+
+        int expected = 100;
+        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, i), expected)
+                .awaitCompletion(Duration.ofMinutes(1));
+
+        await().until(() -> application.count() >= expected);
+
+        checkOffsetSum(tempDir, expected);
+    }
+
+    @Test
+    public void testGracefulTerminationWaitForProcessing(@TempDir File tempDir) {
+        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+
+        companion.topics().createAndWait(topic, 3);
+        String groupId = UUID.randomUUID().toString();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("partitions", 3)
+                .with("auto.offset.reset", "earliest")
+                .with("graceful-shutdown", true)
+                .with("commit-strategy", "checkpoint")
+                .with("auto.commit.interval.ms", 30000)
+                .with("max.poll.records", 10)
+                .with("checkpoint.file.state-dir", tempDir.getAbsolutePath())
+                .with("checkpoint.unpersisted-state-max-age.ms", 60000)
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        RemoteStoringBlockingBean application = runApplication(config, RemoteStoringBlockingBean.class);
+
+        int expected = 200;
+        companion.produceIntegers()
+                .usingGenerator(i -> new ProducerRecord<>(topic, 0, Integer.toString(i), i), expected);
+        companion.produceIntegers()
+                .usingGenerator(i -> new ProducerRecord<>(topic, 1, Integer.toString(i), i), expected);
+        companion.produceIntegers()
+                .usingGenerator(i -> new ProducerRecord<>(topic, 2, Integer.toString(i), i), expected);
+
+        // terminate the connector
+        getBeanManager().createInstance()
+                .select(KafkaConnector.class, ConnectorLiteral.of("smallrye-kafka")).get().terminate(new Object());
+
+        await()
+                .atMost(1, TimeUnit.MINUTES)
+                .pollDelay(10, TimeUnit.SECONDS)
+                .untilAsserted(() -> {
+                    List<JsonObject> states = getStateFromStore(tempDir, 3);
+                    for (JsonObject json : states) {
+                        int offset = json.getInteger("offset");
+                        int state = json.getInteger("state");
+                        System.out.println(json);
+                        assertThat(state).isEqualTo(sum(offset));
+                    }
+                });
+    }
+
     @ApplicationScoped
-    public static class StoringBean {
+    public static class RemoteStoringBlockingBean {
+        private final AtomicLong count = new AtomicLong();
+        private final Map<String, List<Integer>> received = new ConcurrentHashMap<>();
+
+        @Incoming("kafka")
+        @Blocking
+        public CompletionStage<Void> consume(Message<Integer> msg) throws InterruptedException {
+            CheckpointMetadata<Integer> checkpointMetadata = CheckpointMetadata.fromMessage(msg);
+            Thread.sleep(10);
+            if (checkpointMetadata != null) {
+                checkpointMetadata.transform(0, current -> current + msg.getPayload(), true);
+            }
+            String k = Thread.currentThread().getName();
+            List<Integer> list = received.computeIfAbsent(k, s -> new CopyOnWriteArrayList<>());
+            list.add(msg.getPayload());
+            count.incrementAndGet();
+            return msg.ack();
+        }
+
+        public Map<String, List<Integer>> getReceived() {
+            return received;
+        }
+
+        public long count() {
+            return count.get();
+        }
+    }
+
+    @ApplicationScoped
+    public static class RemoteStoringBean {
         private final AtomicLong count = new AtomicLong();
         private final Map<String, List<Integer>> received = new ConcurrentHashMap<>();
 
@@ -228,45 +460,8 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
         }
     }
 
-    @Test
-    public void testSelectiveCheckpoint(@TempDir File tempDir) {
-        System.out.println(tempDir.getAbsolutePath());
-
-        addBeans(FileCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
-
-        companion.topics().createAndWait(topic, 3);
-        String groupId = UUID.randomUUID().toString();
-
-        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
-                .with("group.id", groupId)
-                .with("topic", topic)
-                .with("partitions", 3)
-                .with("auto.offset.reset", "earliest")
-                .with("commit-strategy", "checkpoint")
-                .with("checkpoint.state-store", "file")
-                .with("checkpoint.file.state-dir", tempDir.getAbsolutePath())
-                .with("value.deserializer", IntegerDeserializer.class.getName());
-
-        SelectiveCheckpointBean application = runApplication(config, SelectiveCheckpointBean.class);
-
-        int expected = 500;
-        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, 0, "", i), expected)
-                .awaitCompletion(Duration.ofMinutes(1));
-        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, 1, "", i), expected)
-                .awaitCompletion(Duration.ofMinutes(1));
-        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, 2, "", i), expected)
-                .awaitCompletion(Duration.ofMinutes(1));
-
-        await().atMost(1, TimeUnit.MINUTES)
-                .until(() -> application.count() == expected * 3);
-
-        checkOffsetSum(tempDir, 0, expected);
-        checkOffsetSum(tempDir, 1, expected);
-        checkOffsetSum(tempDir, 2, expected);
-    }
-
     @ApplicationScoped
-    public static class SelectiveCheckpointBean {
+    public static class LocalStoringBean {
         private final AtomicLong count = new AtomicLong();
         private final Map<String, List<Integer>> received = new ConcurrentHashMap<>();
 
@@ -274,12 +469,7 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
         public CompletionStage<Void> consume(Message<Integer> msg) {
             CheckpointMetadata<Integer> checkpointMetadata = CheckpointMetadata.fromMessage(msg);
             if (checkpointMetadata != null) {
-                IncomingKafkaRecordMetadata metadata = msg.getMetadata(IncomingKafkaRecordMetadata.class).get();
-                if ((metadata.getOffset() + 1) % 10 == 0) {
-                    checkpointMetadata.transform(0, current -> current + msg.getPayload(), true);
-                } else {
-                    checkpointMetadata.transform(0, current -> current + msg.getPayload());
-                }
+                checkpointMetadata.transform(0, current -> current + msg.getPayload());
             }
             String k = Thread.currentThread().getName();
             List<Integer> list = received.computeIfAbsent(k, s -> new CopyOnWriteArrayList<>());
@@ -297,4 +487,27 @@ public class FileCheckpointStateStoreTest extends KafkaCompanionTestBase {
         }
     }
 
+    @ApplicationScoped
+    public static class FailingBean {
+        private final AtomicLong count = new AtomicLong();
+        private final Map<String, List<Integer>> received = new ConcurrentHashMap<>();
+
+        @Incoming("kafka")
+        public void consume(Integer msg) {
+            throw new IllegalArgumentException("boom");
+        }
+
+        public Map<String, List<Integer>> getReceived() {
+            return received;
+        }
+
+        public long count() {
+            return count.get();
+        }
+    }
+
+    private int getMaxNumberOfEventLoop(int expected) {
+        // On Github Actions, only one event loop is created.
+        return Math.min(expected, Runtime.getRuntime().availableProcessors() / 2);
+    }
 }

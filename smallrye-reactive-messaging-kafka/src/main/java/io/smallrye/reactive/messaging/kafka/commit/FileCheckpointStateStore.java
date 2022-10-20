@@ -40,21 +40,22 @@ public class FileCheckpointStateStore implements CheckpointStateStore {
 
         @Override
         public CheckpointStateStore create(KafkaConnectorIncomingConfiguration config, Vertx vertx) {
-            String dir = config.config().getValue(
+            Optional<String> dir = config.config().getOptionalValue(
                     KafkaCommitHandler.Strategy.CHECKPOINT + "." + STATE_STORE_NAME + ".state-dir", String.class);
-            File stateDir;
-            if (dir == null) {
+            File stateDir = dir.map(File::new).orElseGet(() -> {
                 try {
-                    stateDir = Files.createTempDirectory("io.smallrye.reactive.messaging.kafka").toFile();
+                    return Files.createTempDirectory("io.smallrye.reactive.messaging.kafka").toFile();
                 } catch (IOException e) {
                     // TODO custom exception
                     throw new IllegalStateException(e);
                 }
-            } else {
-                stateDir = new File(dir);
-            }
+            });
             return new FileCheckpointStateStore(vertx, stateDir);
         }
+    }
+
+    public File getStateDir() {
+        return stateDir;
     }
 
     private String getStatePath(TopicPartition partition) {
