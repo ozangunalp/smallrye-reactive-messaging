@@ -213,9 +213,8 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
             }
         }
 
-        Map<TopicPartition, CheckpointState> removed = removeFromState(checkpointStateMap.keySet());
-        persistProcessingState(removed)
-                .onItemOrFailure().invoke(this::stopFlushAndCheckHealthTimer)
+        removeFromState(checkpointStateMap.keySet())
+                .chain(this::persistProcessingState)
                 .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
         stateStore.close();
@@ -265,27 +264,24 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         }
     }
 
-    private Map<TopicPartition, CheckpointState> removeFromState(Collection<TopicPartition> partitions) {
-        return runOnContextAndAwait(() -> {
+    private Uni<Map<TopicPartition, CheckpointState>> removeFromState(Collection<TopicPartition> partitions) {
+        return Uni.createFrom().emitter(e -> {
             stopFlushAndCheckHealthTimer();
             Map<TopicPartition, CheckpointState> toRemove = new HashMap<>(checkpointStateMap);
             checkpointStateMap.keySet().removeAll(partitions);
             toRemove.keySet().removeAll(partitions);
-            return toRemove;
+            e.complete(toRemove);
         });
     }
 
     @Override
     public void partitionsRevoked(Collection<TopicPartition> partitions) {
-        Map<TopicPartition, CheckpointState> revoked = removeFromState(partitions);
-
-        log.checkpointPartitionsRevoked(consumerId, partitions, revoked.toString());
-
-        persistProcessingState(revoked)
+        removeFromState(partitions)
+                .invoke(revoked -> log.checkpointPartitionsRevoked(consumerId, partitions, revoked.toString()))
+                .chain(this::persistProcessingState)
+                .invoke(this::startFlushAndCheckHealthTimer)
                 .runSubscriptionOn(this::runOnContext)
                 .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
-
-        runOnContext(this::startFlushAndCheckHealthTimer);
     }
 
     Uni<Void> persistProcessingState(Map<TopicPartition, CheckpointState> stateMap) {
@@ -362,8 +358,8 @@ public class KafkaCheckpointCommit extends ContextHolder implements KafkaCommitH
         public LastStateStoredTooLongAgoException(TopicPartition topic, long time, long currentStateOffset,
                 long lastStoredOffset) {
             super(String.format("Latest processing state for topic-partition `%s` persisted %d seconds ago. " +
-                            "At the moment latest registered local processing state is for offset %d. " +
-                            "The last offset for which a state is successfully persisted was %d.",
+                    "At the moment latest registered local processing state is for offset %d. " +
+                    "The last offset for which a state is successfully persisted was %d.",
                     topic, time, currentStateOffset, lastStoredOffset));
         }
     }

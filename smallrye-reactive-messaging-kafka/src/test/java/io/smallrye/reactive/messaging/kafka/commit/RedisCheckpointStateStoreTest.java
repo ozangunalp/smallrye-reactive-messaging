@@ -17,7 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.util.stream.IntStream;
 
 import javax.enterprise.context.ApplicationScoped;
 
@@ -38,6 +38,7 @@ import org.testcontainers.utility.DockerImageName;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import io.smallrye.reactive.messaging.kafka.CountKafkaCdiEvents;
+import io.smallrye.reactive.messaging.kafka.KafkaConnector;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
 import io.smallrye.reactive.messaging.kafka.base.KafkaCompanionTestBase;
 import io.smallrye.reactive.messaging.kafka.base.SingletonInstance;
@@ -96,17 +97,21 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
         redisClient.close();
     }
 
+    private List<JsonObject> getStateFromStore(int partitions) {
+        return Uni.join().all(IntStream.range(0, partitions).boxed()
+                .map(i -> redisClient.send(Request.cmd(Command.GET).arg(topic + ":" + i))
+                        .map(r -> Optional.ofNullable(r)
+                                .map(Response::toBuffer)
+                                .map(Buffer::toJsonObject)
+                                .orElse(JsonObject.of("offset", 0, "state", 0))))
+                .collect(Collectors.toList()))
+                .andFailFast()
+                .await().indefinitely();
+    }
+
     private void checkOffsetSum(int sum) {
         await().untilAsserted(() -> {
-            List<JsonObject> states = Uni.join().all(Stream.of(0, 1, 2)
-                    .map(i -> redisClient.send(Request.cmd(Command.GET).arg(topic + ":" + i))
-                            .map(r -> Optional.ofNullable(r)
-                                    .map(Response::toBuffer)
-                                    .map(Buffer::toJsonObject)
-                                    .orElse(JsonObject.of("offset", 0, "state", 0))))
-                    .collect(Collectors.toList()))
-                    .andFailFast()
-                    .await().indefinitely();
+            List<JsonObject> states = getStateFromStore(3);
 
             int offset = states.stream().mapToInt(tuple -> tuple.getInteger("offset")).sum();
             int state = states.stream().mapToInt(tuple -> tuple.getInteger("state")).sum();
@@ -467,6 +472,55 @@ public class RedisCheckpointStateStoreTest extends KafkaCompanionTestBase {
         await().until(() -> application.count() >= expected);
 
         checkOffsetSum(expected);
+    }
+
+    @Test
+    public void testGracefulTerminationWaitForProcessing() {
+        addBeans(RedisCheckpointStateStore.Factory.class, KafkaCheckpointCommit.Factory.class);
+
+        companion.topics().createAndWait(topic, 3);
+        String groupId = UUID.randomUUID().toString();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.kafka")
+                .with("group.id", groupId)
+                .with("topic", topic)
+                .with("partitions", 3)
+                .with("auto.offset.reset", "earliest")
+                .with("graceful-shutdown", true)
+                .with("commit-strategy", "checkpoint")
+                .with("auto.commit.interval.ms", 30000)
+                .with("max.poll.records", 10)
+                .with("checkpoint.state-store", "redis")
+                .with("checkpoint.unpersisted-state-max-age.ms", 60000)
+                .with("checkpoint.redis.connectionString", getRedisString())
+                .with("value.deserializer", IntegerDeserializer.class.getName());
+
+        RemoteStoringBlockingBean application = runApplication(config, RemoteStoringBlockingBean.class);
+
+        int expected = 200;
+        companion.produceIntegers()
+                .usingGenerator(i -> new ProducerRecord<>(topic, 0, Integer.toString(i), i), expected);
+        companion.produceIntegers()
+                .usingGenerator(i -> new ProducerRecord<>(topic, 1, Integer.toString(i), i), expected);
+        companion.produceIntegers()
+                .usingGenerator(i -> new ProducerRecord<>(topic, 2, Integer.toString(i), i), expected);
+
+        // terminate the connector
+        getBeanManager().createInstance()
+                .select(KafkaConnector.class, ConnectorLiteral.of("smallrye-kafka")).get().terminate(new Object());
+
+        await()
+                .atMost(1, TimeUnit.MINUTES)
+                .pollDelay(10, TimeUnit.SECONDS)
+                .untilAsserted(() -> {
+                    List<JsonObject> states = getStateFromStore(3);
+                    for (JsonObject json : states) {
+                        int offset = json.getInteger("offset");
+                        int state = json.getInteger("state");
+                        System.out.println(json);
+                        assertThat(state).isEqualTo(sum(offset));
+                    }
+                });
     }
 
     @ApplicationScoped
