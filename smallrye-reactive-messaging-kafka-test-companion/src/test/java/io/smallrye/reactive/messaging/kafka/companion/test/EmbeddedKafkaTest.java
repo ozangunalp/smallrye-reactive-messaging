@@ -15,18 +15,16 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.Endpoint;
 import org.apache.kafka.common.config.SslConfigs;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.smallrye.reactive.messaging.kafka.companion.KafkaCompanion;
-import io.smallrye.reactive.messaging.kafka.companion.TestTags;
 import kafka.server.KafkaConfig;
 
-@Tag(TestTags.FLAKY)
+//@Tag(TestTags.FLAKY)
 public class EmbeddedKafkaTest {
 
-    @Test
+    @RepeatedTest(40)
     void test() {
         try (EmbeddedKafkaBroker broker = new EmbeddedKafkaBroker().start()) {
             String advertisedListeners = broker.getAdvertisedListeners();
@@ -38,7 +36,7 @@ public class EmbeddedKafkaTest {
         }
     }
 
-    @Test
+    @RepeatedTest(40)
     void testWithExistingLogDir(@TempDir File dir) {
         EmbeddedKafkaBroker broker = new EmbeddedKafkaBroker()
                 .withNodeId(0)
@@ -59,7 +57,7 @@ public class EmbeddedKafkaTest {
         broker.close();
     }
 
-    @Test
+    @RepeatedTest(40)
     void testSsl() {
         Endpoint external = endpoint("EXTERNAL", SSL, "localhost", 0);
         Endpoint internal = endpoint("INTERNAL", PLAINTEXT, "localhost", 0);

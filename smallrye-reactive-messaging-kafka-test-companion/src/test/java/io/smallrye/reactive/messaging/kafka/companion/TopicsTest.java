@@ -9,13 +9,13 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.kafka.clients.admin.TopicDescription;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.RepeatedTest;
 
 import io.smallrye.reactive.messaging.kafka.companion.test.KafkaCompanionTestBase;
 
 public class TopicsTest extends KafkaCompanionTestBase {
 
-    @Test
+    @RepeatedTest(30)
     void testCreateTopicAndWait() {
         String topicName = UUID.randomUUID().toString();
         companion.topics().createAndWait(topicName, 2);
@@ -27,7 +27,7 @@ public class TopicsTest extends KafkaCompanionTestBase {
                         .satisfies(partitions -> assertThat(partitions).hasSize(2)));
     }
 
-    @Test
+    @RepeatedTest(30)
     void testCreateTopic() {
         String newTopic = UUID.randomUUID().toString();
         companion.topics().create(newTopic, 1);
@@ -35,7 +35,7 @@ public class TopicsTest extends KafkaCompanionTestBase {
                 .until(() -> companion.topics().list().contains(newTopic));
     }
 
-    @Test
+    @RepeatedTest(30)
     void testDescribeTopics() {
         String topic1 = UUID.randomUUID().toString();
         String topic2 = UUID.randomUUID().toString();
@@ -55,7 +55,7 @@ public class TopicsTest extends KafkaCompanionTestBase {
                 .hasEntrySatisfying(topic3, t -> assertThat(t.partitions()).hasSize(1));
     }
 
-    @Test
+    @RepeatedTest(30)
     void testCreateAndWaitAndDelete() {
         companion.topics().createAndWait(topic + "-new", 3);
         companion.topics().delete(topic + "-new");
