@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.LongAdder;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -35,7 +35,7 @@ public class PerformanceConsumerTest extends KafkaCompanionTestBase {
     @BeforeAll
     static void insertRecords() {
         expected = new ArrayList<>();
-        companion.produceStrings().usingGenerator(i -> {
+        companion.produceStrings().withConcurrency().usingGenerator(i -> {
             expected.add(Integer.toString(i));
             return new ProducerRecord<>(topic, "key", Long.toString(i));
         }, COUNT).awaitCompletion(Duration.ofMinutes(2));

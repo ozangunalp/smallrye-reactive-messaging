@@ -1,6 +1,5 @@
 package io.smallrye.reactive.messaging.kafka.impl;
 
-import static io.smallrye.reactive.messaging.kafka.KafkaConnector.TRACER;
 import static io.smallrye.reactive.messaging.kafka.i18n.KafkaLogging.log;
 
 import java.time.Duration;
@@ -8,14 +7,18 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Flow;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import javax.enterprise.inject.Instance;
+import jakarta.enterprise.inject.Instance;
 
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerInterceptor;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.errors.InvalidTopicException;
@@ -28,19 +31,16 @@ import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.eclipse.microprofile.reactive.messaging.Message;
-import org.eclipse.microprofile.reactive.streams.operators.ReactiveStreams;
-import org.eclipse.microprofile.reactive.streams.operators.SubscriberBuilder;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
-import io.opentelemetry.api.trace.Span;
-import io.opentelemetry.api.trace.SpanBuilder;
-import io.opentelemetry.api.trace.SpanKind;
-import io.opentelemetry.context.Context;
-import io.opentelemetry.context.Scope;
-import io.opentelemetry.semconv.trace.attributes.SemanticAttributes;
+import io.opentelemetry.instrumentation.api.instrumenter.Instrumenter;
+import io.opentelemetry.instrumentation.api.instrumenter.InstrumenterBuilder;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessageOperation;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingAttributesExtractor;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingAttributesGetter;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingSpanNameExtractor;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.OutgoingMessageMetadata;
-import io.smallrye.reactive.messaging.TracingMetadata;
 import io.smallrye.reactive.messaging.ce.OutgoingCloudEventMetadata;
 import io.smallrye.reactive.messaging.health.HealthReport;
 import io.smallrye.reactive.messaging.kafka.KafkaCDIEvents;
@@ -52,15 +52,20 @@ import io.smallrye.reactive.messaging.kafka.api.IncomingKafkaRecordMetadata;
 import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata;
 import io.smallrye.reactive.messaging.kafka.health.KafkaSinkHealth;
 import io.smallrye.reactive.messaging.kafka.impl.ce.KafkaCloudEventHelper;
-import io.smallrye.reactive.messaging.kafka.tracing.HeaderInjectAdapter;
+import io.smallrye.reactive.messaging.kafka.tracing.KafkaAttributesExtractor;
+import io.smallrye.reactive.messaging.kafka.tracing.KafkaTrace;
+import io.smallrye.reactive.messaging.kafka.tracing.KafkaTraceTextMapSetter;
+import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
+import io.smallrye.reactive.messaging.tracing.TracingUtils;
 
+@SuppressWarnings("jol")
 public class KafkaSink {
 
     private final ReactiveKafkaProducer<?, ?> client;
     private final int partition;
     private final String topic;
     private final String key;
-    private final SubscriberBuilder<? extends Message<?>, Void> subscriber;
+    private final Flow.Subscriber<? extends Message<?>> subscriber;
 
     private final long retries;
     private final int deliveryTimeoutMs;
@@ -78,30 +83,32 @@ public class KafkaSink {
 
     private final RuntimeKafkaSinkConfiguration runtimeConfiguration;
 
+    private final Instrumenter<KafkaTrace, Void> instrumenter;
+
     public KafkaSink(KafkaConnectorOutgoingConfiguration config, KafkaCDIEvents kafkaCDIEvents,
-            Instance<SerializationFailureHandler<?>> serializationFailureHandlers) {
-        isTracingEnabled = config.getTracingEnabled();
+            Instance<SerializationFailureHandler<?>> serializationFailureHandlers,
+            Instance<ProducerInterceptor<?, ?>> producerInterceptors) {
+        this.isTracingEnabled = config.getTracingEnabled();
+        this.partition = config.getPartition();
+        this.retries = config.getRetries();
+        this.topic = config.getTopic().orElseGet(config::getChannel);
+        this.key = config.getKey().orElse(null);
+        this.channel = config.getChannel();
 
-        this.client = new ReactiveKafkaProducer<>(config, serializationFailureHandlers, this::reportFailure);
+        this.client = new ReactiveKafkaProducer<>(config, serializationFailureHandlers, producerInterceptors,
+                this::reportFailure,
+                (p, c) -> {
+                    log.connectedToKafka(getClientId(c), config.getBootstrapServers(), topic);
+                    // fire producer event (e.g. bind metrics)
+                    kafkaCDIEvents.producer().fire(p);
+                });
 
-        // fire producer event (e.g. bind metrics)
-        kafkaCDIEvents.producer().fire(client.unwrap());
-
-        partition = config.getPartition();
-        retries = config.getRetries();
-        int defaultDeliveryTimeoutMs = (Integer) ProducerConfig.configDef().defaultValues()
-                .get(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG);
-        String deliveryTimeoutString = client.get(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG);
-        deliveryTimeoutMs = deliveryTimeoutString != null ? Integer.parseInt(deliveryTimeoutString) : defaultDeliveryTimeoutMs;
-        topic = config.getTopic().orElseGet(config::getChannel);
-        key = config.getKey().orElse(null);
-        writeCloudEvents = config.getCloudEvents();
-        writeAsBinaryCloudEvent = config.getCloudEventsMode().equalsIgnoreCase("binary");
+        this.writeCloudEvents = config.getCloudEvents();
+        this.writeAsBinaryCloudEvent = config.getCloudEventsMode().equalsIgnoreCase("binary");
         boolean waitForWriteCompletion = config.getWaitForWriteCompletion();
         this.mandatoryCloudEventAttributeSet = config.getCloudEventsType().isPresent()
                 && config.getCloudEventsSource().isPresent();
-        this.channel = config.getChannel();
-
+        this.deliveryTimeoutMs = getDeliveryTimeoutMs(client.configuration());
         this.runtimeConfiguration = RuntimeKafkaSinkConfiguration.buildFromConfiguration(config);
 
         // Validate the serializer for structured Cloud Events
@@ -117,7 +124,7 @@ public class KafkaSink {
         this.isHealthEnabled = config.getHealthEnabled();
         this.isHealthReadinessEnabled = config.getHealthReadinessEnabled();
         if (isHealthEnabled) {
-            this.health = new KafkaSinkHealth(config, client.configuration(), client.unwrap());
+            this.health = new KafkaSinkHealth(config, client.configuration(), client);
         } else {
             this.health = null;
         }
@@ -126,18 +133,36 @@ public class KafkaSink {
         if (requests <= 0) {
             requests = Long.MAX_VALUE;
         }
-        processor = new KafkaSenderProcessor(requests, waitForWriteCompletion,
+        this.processor = new KafkaSenderProcessor(requests, waitForWriteCompletion,
                 writeMessageToKafka());
-        subscriber = ReactiveStreams.<Message<?>> builder()
-                .via(processor)
-                .onError(f -> {
-                    log.unableToDispatch(f);
-                    reportFailure(f);
-                })
-                .ignore();
+        this.subscriber = MultiUtils.via(processor, m -> m.onFailure().invoke(f -> {
+            log.unableToDispatch(f);
+            reportFailure(f);
+        }));
 
-        log.connectedToKafka(client.getClientId(), config.getBootstrapServers(), topic);
+        KafkaAttributesExtractor kafkaAttributesExtractor = new KafkaAttributesExtractor();
+        MessagingAttributesGetter<KafkaTrace, Void> messagingAttributesGetter = kafkaAttributesExtractor
+                .getMessagingAttributesGetter();
+        InstrumenterBuilder<KafkaTrace, Void> builder = Instrumenter.builder(GlobalOpenTelemetry.get(),
+                "io.smallrye.reactive.messaging",
+                MessagingSpanNameExtractor.create(messagingAttributesGetter, MessageOperation.SEND));
 
+        instrumenter = builder
+                .addAttributesExtractor(MessagingAttributesExtractor.create(messagingAttributesGetter, MessageOperation.SEND))
+                .addAttributesExtractor(kafkaAttributesExtractor)
+                .buildProducerInstrumenter(KafkaTraceTextMapSetter.INSTANCE);
+
+    }
+
+    private static String getClientId(Map<String, Object> config) {
+        return (String) config.get(ProducerConfig.CLIENT_ID_CONFIG);
+    }
+
+    private static int getDeliveryTimeoutMs(Map<String, ?> config) {
+        int defaultDeliveryTimeoutMs = (Integer) ProducerConfig.configDef().defaultValues()
+                .get(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG);
+        String deliveryTimeoutString = (String) config.get(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG);
+        return deliveryTimeoutString != null ? Integer.parseInt(deliveryTimeoutString) : defaultDeliveryTimeoutMs;
     }
 
     private synchronized void reportFailure(Throwable failure) {
@@ -195,6 +220,17 @@ public class KafkaSink {
                 } else {
                     record = getProducerRecord(message, outgoingMetadata, incomingMetadata, actualTopic);
                 }
+
+                if (isTracingEnabled) {
+                    TracingUtils.traceOutgoing(instrumenter, message, new KafkaTrace.Builder()
+                            .withPartition(record.partition() != null ? record.partition() : -1)
+                            .withTopic(record.topic())
+                            .withHeaders(record.headers())
+                            .withGroupId(client.get(ConsumerConfig.GROUP_ID_CONFIG))
+                            .withClientId(client.get(ConsumerConfig.CLIENT_ID_CONFIG))
+                            .build());
+                }
+
                 log.sendingMessageToTopic(message, actualTopic);
 
                 @SuppressWarnings({ "unchecked", "rawtypes" })
@@ -202,7 +238,8 @@ public class KafkaSink {
 
                 Uni<Void> uni = sendUni.onItem().transformToUni(recordMetadata -> {
                     OutgoingMessageMetadata.setResultOnMessage(message, recordMetadata);
-                    log.successfullyToTopic(message, record.topic());
+                    log.successfullyToTopic(message, recordMetadata.topic(), recordMetadata.partition(),
+                            recordMetadata.offset());
                     return Uni.createFrom().completionStage(message.ack());
                 });
 
@@ -269,7 +306,6 @@ public class KafkaSink {
         }
 
         Headers kafkaHeaders = KafkaRecordHelper.getHeaders(om, im, runtimeConfiguration);
-        createOutgoingTrace(message, actualTopic, actualPartition, kafkaHeaders);
         Object payload = message.getPayload();
         if (payload instanceof Record) {
             payload = ((Record) payload).value();
@@ -309,45 +345,7 @@ public class KafkaSink {
         return key;
     }
 
-    private void createOutgoingTrace(Message<?> message, String topic, int partition, Headers headers) {
-        if (isTracingEnabled) {
-            Optional<TracingMetadata> tracingMetadata = TracingMetadata.fromMessage(message);
-
-            final SpanBuilder spanBuilder = TRACER.spanBuilder(topic + " send")
-                    .setSpanKind(SpanKind.PRODUCER);
-
-            if (tracingMetadata.isPresent()) {
-                // Handle possible parent span
-                final Context parentSpanContext = tracingMetadata.get().getCurrentContext();
-                if (parentSpanContext != null) {
-                    spanBuilder.setParent(parentSpanContext);
-                } else {
-                    spanBuilder.setNoParent();
-                }
-            } else {
-                spanBuilder.setNoParent();
-            }
-
-            final Span span = spanBuilder.startSpan();
-            Scope scope = span.makeCurrent();
-
-            // Set Span attributes
-            if (partition != -1) {
-                span.setAttribute(SemanticAttributes.MESSAGING_KAFKA_PARTITION, partition);
-            }
-            span.setAttribute(SemanticAttributes.MESSAGING_SYSTEM, "kafka");
-            span.setAttribute(SemanticAttributes.MESSAGING_DESTINATION, topic);
-            span.setAttribute(SemanticAttributes.MESSAGING_DESTINATION_KIND, "topic");
-
-            // Set span onto headers
-            GlobalOpenTelemetry.getPropagators().getTextMapPropagator()
-                    .inject(Context.current(), headers, HeaderInjectAdapter.SETTER);
-            span.end();
-            scope.close();
-        }
-    }
-
-    public SubscriberBuilder<? extends Message<?>, Void> getSink() {
+    public Flow.Subscriber<? extends Message<?>> getSink() {
         return subscriber;
     }
 

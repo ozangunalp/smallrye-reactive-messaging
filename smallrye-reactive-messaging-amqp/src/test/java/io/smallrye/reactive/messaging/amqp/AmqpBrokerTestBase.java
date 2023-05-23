@@ -1,6 +1,6 @@
 package io.smallrye.reactive.messaging.amqp;
 
-import javax.enterprise.inject.se.SeContainer;
+import jakarta.enterprise.inject.se.SeContainer;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.junit.jupiter.api.AfterAll;
@@ -17,6 +17,7 @@ import io.vertx.mutiny.core.Vertx;
 public class AmqpBrokerTestBase {
 
     public static final AmqpBroker broker = new AmqpBroker();
+    protected static final String BROKER_XML_LOCATION = "ampq.broker.xml.name";
 
     protected ExecutionHolder executionHolder;
     protected final static String host = "127.0.0.1";
@@ -28,6 +29,10 @@ public class AmqpBrokerTestBase {
 
     @BeforeAll
     public static void startBroker() {
+        String brokerXmlUrl = System.getProperty(BROKER_XML_LOCATION);
+        if (brokerXmlUrl != null) {
+            broker.setConfigResourcePath(brokerXmlUrl);
+        }
         broker.start(port);
         System.setProperty("amqp-host", host);
         System.setProperty("amqp-port", Integer.toString(port));

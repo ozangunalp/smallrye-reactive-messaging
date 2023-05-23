@@ -6,8 +6,8 @@ import static org.awaitility.Awaitility.await;
 import java.util.*;
 import java.util.concurrent.*;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.inject.Inject;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.reactive.messaging.Acknowledgment;
@@ -18,7 +18,6 @@ import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.Outgoing;
 import org.eclipse.microprofile.reactive.messaging.spi.Connector;
 import org.junit.jupiter.api.*;
-import org.reactivestreams.Publisher;
 
 import io.smallrye.common.vertx.ContextLocals;
 import io.smallrye.mutiny.Multi;
@@ -168,7 +167,7 @@ public class LocalPropagationTest extends WeldTestBaseWithoutTails {
         ExecutionHolder executionHolder;
 
         @Override
-        public Publisher<? extends Message<?>> getPublisher(Config config) {
+        public Flow.Publisher<? extends Message<?>> getPublisher(Config config) {
             Context context = executionHolder.vertx().getOrCreateContext();
             return Multi.createFrom().items(1, 2, 3, 4, 5)
                     .onItem()
@@ -396,7 +395,8 @@ public class LocalPropagationTest extends WeldTestBaseWithoutTails {
 
             int p = ContextLocals.get("input", null);
             assertThat(p + 1).isEqualTo(payload);
-            return Uni.createFrom().item(payload).emitOn(Infrastructure.getDefaultExecutor());
+            return Uni.createFrom().item(() -> payload)
+                    .runSubscriptionOn(Infrastructure.getDefaultExecutor());
         }
 
         @Incoming("after-process")

@@ -11,8 +11,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.inject.spi.DeploymentException;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.spi.DeploymentException;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -219,24 +219,24 @@ public class MultiTopicsTest extends KafkaCompanionTestBase {
                 .with("value.deserializer", StringDeserializer.class.getName())
                 .with("pattern", true),
                 KafkaConsumer.class))
-                        .isInstanceOf(DeploymentException.class)
-                        .hasCauseInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(DeploymentException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
 
         // topics and no topic
         assertThatThrownBy(() -> runApplication(kafkaConfig("mp.messaging.incoming.kafka")
                 .with("value.deserializer", StringDeserializer.class.getName())
                 .with("topic", "my-topic")
                 .with("topics", "a, b, c"), KafkaConsumer.class))
-                        .isInstanceOf(DeploymentException.class)
-                        .hasCauseInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(DeploymentException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
 
         // topics and pattern
         assertThatThrownBy(() -> runApplication(kafkaConfig("mp.messaging.incoming.kafka")
                 .with("value.deserializer", StringDeserializer.class.getName())
                 .with("pattern", true)
                 .with("topics", "a, b, c"), KafkaConsumer.class))
-                        .isInstanceOf(DeploymentException.class)
-                        .hasCauseInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(DeploymentException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
     }
 
     @ApplicationScoped

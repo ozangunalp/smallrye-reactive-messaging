@@ -11,8 +11,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.inject.Inject;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Message;
@@ -70,7 +70,7 @@ public class LocalPropagationAckTest extends MqttTestBase {
     public void waitUntilReady(WeldContainer container) {
         MqttConnector connector = container.select(MqttConnector.class,
                 ConnectorLiteral.of(MqttConnector.CONNECTOR_NAME)).get();
-        await().until(connector::isReady);
+        await().until(() -> connector.getReadiness().isOk());
     }
 
     @BeforeEach

@@ -2,15 +2,15 @@ package io.smallrye.reactive.messaging;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Flow;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.Outgoing;
 import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
 import org.eclipse.microprofile.reactive.streams.operators.ReactiveStreams;
-import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 
 import io.smallrye.mutiny.Multi;
@@ -36,7 +36,7 @@ public class MyBean {
     }
 
     @Outgoing("my-dummy-stream")
-    Publisher<Message<String>> stream() {
+    Flow.Publisher<Message<String>> stream() {
         return Multi.createFrom().items("foo", "bar").map(Message::of);
     }
 

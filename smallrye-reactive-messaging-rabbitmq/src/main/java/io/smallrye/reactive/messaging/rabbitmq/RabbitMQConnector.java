@@ -1,5 +1,6 @@
 package io.smallrye.reactive.messaging.rabbitmq;
 
+import static io.opentelemetry.instrumentation.api.instrumenter.messaging.MessageOperation.RECEIVE;
 import static io.smallrye.reactive.messaging.annotations.ConnectorAttribute.Direction.INCOMING;
 import static io.smallrye.reactive.messaging.annotations.ConnectorAttribute.Direction.INCOMING_AND_OUTGOING;
 import static io.smallrye.reactive.messaging.annotations.ConnectorAttribute.Direction.OUTGOING;
@@ -9,39 +10,44 @@ import static java.time.Duration.ofSeconds;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Flow;
 import java.util.stream.Collectors;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.Priority;
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.context.BeforeDestroyed;
-import javax.enterprise.event.Observes;
-import javax.enterprise.event.Reception;
-import javax.enterprise.inject.Any;
-import javax.enterprise.inject.Instance;
-import javax.inject.Inject;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Priority;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.BeforeDestroyed;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.event.Reception;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.spi.Connector;
 import org.eclipse.microprofile.reactive.messaging.spi.IncomingConnectorFactory;
-import org.eclipse.microprofile.reactive.messaging.spi.OutgoingConnectorFactory;
-import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
-import org.eclipse.microprofile.reactive.streams.operators.ReactiveStreams;
 import org.eclipse.microprofile.reactive.streams.operators.SubscriberBuilder;
-import org.reactivestreams.Subscription;
 
 import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.impl.CredentialsProvider;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.instrumentation.api.instrumenter.Instrumenter;
+import io.opentelemetry.instrumentation.api.instrumenter.InstrumenterBuilder;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingAttributesExtractor;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingAttributesGetter;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingSpanNameExtractor;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.tuples.Tuple2;
 import io.smallrye.reactive.messaging.annotations.ConnectorAttribute;
+import io.smallrye.reactive.messaging.connector.InboundConnector;
+import io.smallrye.reactive.messaging.connector.OutboundConnector;
 import io.smallrye.reactive.messaging.health.HealthReport;
 import io.smallrye.reactive.messaging.health.HealthReporter;
 import io.smallrye.reactive.messaging.providers.connectors.ExecutionHolder;
+import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
 import io.smallrye.reactive.messaging.rabbitmq.ack.RabbitMQAck;
 import io.smallrye.reactive.messaging.rabbitmq.ack.RabbitMQAckHandler;
 import io.smallrye.reactive.messaging.rabbitmq.ack.RabbitMQAutoAck;
@@ -49,7 +55,10 @@ import io.smallrye.reactive.messaging.rabbitmq.fault.RabbitMQAccept;
 import io.smallrye.reactive.messaging.rabbitmq.fault.RabbitMQFailStop;
 import io.smallrye.reactive.messaging.rabbitmq.fault.RabbitMQFailureHandler;
 import io.smallrye.reactive.messaging.rabbitmq.fault.RabbitMQReject;
-import io.smallrye.reactive.messaging.rabbitmq.tracing.TracingUtils;
+import io.smallrye.reactive.messaging.rabbitmq.tracing.RabbitMQTrace;
+import io.smallrye.reactive.messaging.rabbitmq.tracing.RabbitMQTraceAttributesExtractor;
+import io.smallrye.reactive.messaging.rabbitmq.tracing.RabbitMQTraceTextMapGetter;
+import io.smallrye.reactive.messaging.tracing.TracingUtils;
 import io.vertx.core.json.JsonObject;
 import io.vertx.mutiny.core.Vertx;
 import io.vertx.mutiny.rabbitmq.RabbitMQClient;
@@ -88,7 +97,7 @@ import io.vertx.rabbitmq.RabbitMQPublisherOptions;
 @ConnectorAttribute(name = "credentials-provider-name", direction = INCOMING_AND_OUTGOING, description = "The name of the RabbitMQ Credentials Provider bean used to provide dynamic credentials to the RabbitMQ client", type = "string", alias = "rabbitmq-credentials-provider-name")
 
 // Exchange
-@ConnectorAttribute(name = "exchange.name", direction = INCOMING_AND_OUTGOING, description = "The exchange that messages are published to or consumed from. If not set, the channel name is used", type = "string")
+@ConnectorAttribute(name = "exchange.name", direction = INCOMING_AND_OUTGOING, description = "The exchange that messages are published to or consumed from. If not set, the channel name is used. If set to \"\", the default exchange is used.", type = "string")
 @ConnectorAttribute(name = "exchange.durable", direction = INCOMING_AND_OUTGOING, description = "Whether the exchange is durable", type = "boolean", defaultValue = "true")
 @ConnectorAttribute(name = "exchange.auto-delete", direction = INCOMING_AND_OUTGOING, description = "Whether the exchange should be deleted after use", type = "boolean", defaultValue = "false")
 @ConnectorAttribute(name = "exchange.type", direction = INCOMING_AND_OUTGOING, description = "The exchange type: direct, fanout, headers or topic (default)", type = "string", defaultValue = "topic")
@@ -107,6 +116,7 @@ import io.vertx.rabbitmq.RabbitMQPublisherOptions;
 @ConnectorAttribute(name = "max-outgoing-internal-queue-size", direction = OUTGOING, description = "The maximum size of the outgoing internal queue", type = "int")
 @ConnectorAttribute(name = "max-incoming-internal-queue-size", direction = INCOMING, description = "The maximum size of the incoming internal queue", type = "int", defaultValue = "500000")
 @ConnectorAttribute(name = "connection-count", direction = INCOMING, description = "The number of RabbitMQ connections to create for consuming from this queue. This might be necessary to consume from a sharded queue with a single client.", type = "int", defaultValue = "1")
+@ConnectorAttribute(name = "queue.x-max-priority", direction = INCOMING, description = "Define priority level queue consumer", type = "int")
 
 // DLQs
 @ConnectorAttribute(name = "auto-bind-dlq", direction = INCOMING, description = "Whether to automatically declare the DLQ and bind it to the binder DLX", type = "boolean", defaultValue = "false")
@@ -136,17 +146,17 @@ import io.vertx.rabbitmq.RabbitMQPublisherOptions;
 @ConnectorAttribute(name = "tracing.enabled", direction = INCOMING_AND_OUTGOING, description = "Whether tracing is enabled (default) or disabled", type = "boolean", defaultValue = "true")
 @ConnectorAttribute(name = "tracing.attribute-headers", direction = INCOMING_AND_OUTGOING, description = "A comma-separated list of headers that should be recorded as span attributes. Relevant only if tracing.enabled=true", type = "string", defaultValue = "")
 
-public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConnectorFactory, HealthReporter {
-    static final String CONNECTOR_NAME = "smallrye-rabbitmq";
+public class RabbitMQConnector implements InboundConnector, OutboundConnector, HealthReporter {
+    public static final String CONNECTOR_NAME = "smallrye-rabbitmq";
 
     private enum ChannelStatus {
         CONNECTED,
         NOT_CONNECTED,
-        INITIALISING
+        INITIALISING;
     }
 
     // The list of RabbitMQClient's currently managed by this connector
-    private final List<RabbitMQClient> clients = new CopyOnWriteArrayList<>();
+    private final Map<String, RabbitMQClient> clients = new ConcurrentHashMap<>();
 
     // Keyed on channel name, value is the channel connection state
     private final Map<String, ChannelStatus> incomingChannelStatus = new ConcurrentHashMap<>();
@@ -154,47 +164,66 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
     private final Map<String, ChannelStatus> outgoingChannelStatus = new ConcurrentHashMap<>();
 
     // The list of RabbitMQMessageSender's currently managed by this connector
-    private final List<Subscription> subscriptions = new CopyOnWriteArrayList<>();
+    private final Map<String, Flow.Subscription> subscriptions = new ConcurrentHashMap<>();
 
     @Inject
     ExecutionHolder executionHolder;
 
     @Inject
     @Any
-    private Instance<RabbitMQOptions> clientOptions;
+    Instance<RabbitMQOptions> clientOptions;
 
     @Inject
     @Any
-    private Instance<CredentialsProvider> credentialsProviders;
+    Instance<CredentialsProvider> credentialsProviders;
+
+    private Instrumenter<RabbitMQTrace, Void> instrumenter;
 
     RabbitMQConnector() {
         // used for proxies
     }
 
-    private static String getExchangeName(final RabbitMQConnectorCommonConfiguration config) {
-        return config.getExchangeName().orElse(config.getChannel());
+    public static String getExchangeName(final RabbitMQConnectorCommonConfiguration config) {
+        return config.getExchangeName().map(s -> "\"\"".equals(s) ? "" : s).orElse(config.getChannel());
     }
 
     @PostConstruct
     void init() {
-        TracingUtils.initialise();
+        RabbitMQTraceAttributesExtractor rabbitMQAttributesExtractor = new RabbitMQTraceAttributesExtractor();
+        MessagingAttributesGetter<RabbitMQTrace, Void> messagingAttributesGetter = rabbitMQAttributesExtractor
+                .getMessagingAttributesGetter();
+        InstrumenterBuilder<RabbitMQTrace, Void> builder = Instrumenter.builder(GlobalOpenTelemetry.get(),
+                "io.smallrye.reactive.messaging", MessagingSpanNameExtractor.create(messagingAttributesGetter, RECEIVE));
+
+        instrumenter = builder.addAttributesExtractor(rabbitMQAttributesExtractor)
+                .addAttributesExtractor(MessagingAttributesExtractor.create(messagingAttributesGetter, RECEIVE))
+                .buildConsumerInstrumenter(RabbitMQTraceTextMapGetter.INSTANCE);
     }
 
-    private Multi<? extends Message<?>> getStreamOfMessages(RabbitMQConsumer receiver,
+    private Multi<? extends Message<?>> getStreamOfMessages(
+            RabbitMQConsumer receiver,
             ConnectionHolder holder,
             RabbitMQConnectorIncomingConfiguration ic,
             RabbitMQFailureHandler onNack,
             RabbitMQAckHandler onAck) {
+
         final String queueName = ic.getQueueName();
         final boolean isTracingEnabled = ic.getTracingEnabled();
         final String contentTypeOverride = ic.getContentTypeOverride().orElse(null);
-        final List<String> attributeHeaders = Arrays.stream(ic.getTracingAttributeHeaders().split(","))
-                .map(String::trim).collect(Collectors.toList());
         log.receiverListeningAddress(queueName);
 
         return receiver.toMulti()
-                .map(m -> new IncomingRabbitMQMessage<>(m, holder, isTracingEnabled, onNack, onAck, contentTypeOverride))
-                .map(m -> isTracingEnabled ? TracingUtils.addIncomingTrace(m, queueName, attributeHeaders) : m);
+                .map(m -> new IncomingRabbitMQMessage<>(m, holder, onNack, onAck, contentTypeOverride))
+                .plug(m -> {
+                    if (isTracingEnabled) {
+                        return m.map(msg -> {
+                            TracingUtils.traceIncoming(instrumenter, msg, RabbitMQTrace.traceQueue(queueName,
+                                    msg.message.envelope().getRoutingKey(), msg.getHeaders()));
+                            return msg;
+                        });
+                    }
+                    return m;
+                });
     }
 
     /**
@@ -208,12 +237,12 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
      *
      * @param config the configuration, must not be {@code null}, must contain the {@link #CHANNEL_NAME_ATTRIBUTE}
      *        attribute.
-     * @return the created {@link PublisherBuilder}, will not be {@code null}.
+     * @return the created {@link Flow.Publisher}, will not be {@code null}.
      * @throws IllegalArgumentException if the configuration is invalid.
      * @throws NoSuchElementException if the configuration does not contain an expected attribute.
      */
     @Override
-    public PublisherBuilder<? extends Message<?>> getPublisherBuilder(final Config config) {
+    public Flow.Publisher<? extends Message<?>> getPublisher(final Config config) {
         final RabbitMQConnectorIncomingConfiguration ic = new RabbitMQConnectorIncomingConfiguration(config);
         incomingChannelStatus.put(ic.getChannel(), ChannelStatus.INITIALISING);
 
@@ -229,6 +258,13 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
                     client.getDelegate().addConnectionEstablishedCallback(promise -> {
                         // Ensure we create the queues (and exchanges) from which messages will be read
                         Uni.createFrom().nullItem()
+                                .onItem().call(ignored -> {
+                                    if (ic.getMaxOutstandingMessages().isPresent()) {
+                                        return client.basicQos(ic.getMaxOutstandingMessages().get(), false);
+                                    } else {
+                                        return Uni.createFrom().nullItem();
+                                    }
+                                })
                                 .onItem().call(() -> establishQueue(client, ic))
                                 .onItem().call(() -> establishDLQ(client, ic))
                                 .subscribe().with(ignored -> promise.complete(), promise::fail);
@@ -249,18 +285,11 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
             multi = multi.broadcast().toAllSubscribers();
         }
 
-        return ReactiveStreams.fromPublisher(multi);
+        return multi;
     }
 
     private Uni<RabbitMQConsumer> createConsumer(RabbitMQConnectorIncomingConfiguration ic, RabbitMQClient client) {
         return Uni.createFrom().nullItem()
-                .onItem().call(ignored -> {
-                    if (ic.getMaxOutstandingMessages().isPresent()) {
-                        return client.basicQos(ic.getMaxOutstandingMessages().get(), false);
-                    } else {
-                        return Uni.createFrom().nullItem();
-                    }
-                })
                 .onItem().transformToUni(ignored -> client.basicConsumer(serverQueueName(ic.getQueueName()), new QueueOptions()
                         .setAutoAck(ic.getAutoAcknowledgement())
                         .setMaxInternalQueueSize(ic.getMaxIncomingInternalQueueSize())
@@ -326,7 +355,7 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
      * @throws NoSuchElementException if the configuration does not contain an expected attribute.
      */
     @Override
-    public SubscriberBuilder<? extends Message<?>, Void> getSubscriberBuilder(final Config config) {
+    public Flow.Subscriber<? extends Message<?>> getSubscriber(final Config config) {
         final RabbitMQConnectorOutgoingConfiguration oc = new RabbitMQConnectorOutgoingConfiguration(config);
         outgoingChannelStatus.put(oc.getChannel(), ChannelStatus.INITIALISING);
 
@@ -334,9 +363,7 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
         final RabbitMQClient client = RabbitMQClientHelper.createClient(this, oc, clientOptions, credentialsProviders);
         client.getDelegate().addConnectionEstablishedCallback(promise -> {
             // Ensure we create the exchange to which messages are to be sent
-            Uni.createFrom().nullItem()
-                    .onItem().call(ignored -> establishExchange(client, oc))
-                    .subscribe().with((ignored) -> promise.complete(), promise::fail);
+            establishExchange(client, oc).subscribe().with((ignored) -> promise.complete(), promise::fail);
         });
 
         final ConnectionHolder holder = new ConnectionHolder(client, oc, getVertx());
@@ -361,16 +388,13 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
         final RabbitMQMessageSender processor = new RabbitMQMessageSender(
                 oc,
                 getSender);
-        subscriptions.add(processor);
+        subscriptions.put(oc.getChannel(), processor);
 
         // Return a SubscriberBuilder
-        return ReactiveStreams.<Message<?>> builder()
-                .via(processor)
-                .onError(t -> {
-                    log.error(oc.getChannel(), t);
-                    outgoingChannelStatus.put(oc.getChannel(), ChannelStatus.NOT_CONNECTED);
-                })
-                .ignore();
+        return MultiUtils.via(processor, m -> m.onFailure().invoke(t -> {
+            log.error(oc.getChannel(), t);
+            outgoingChannelStatus.put(oc.getChannel(), ChannelStatus.NOT_CONNECTED);
+        }));
     }
 
     @Override
@@ -408,8 +432,8 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
      */
     public void terminate(
             @SuppressWarnings("unused") @Observes(notifyObserver = Reception.IF_EXISTS) @Priority(50) @BeforeDestroyed(ApplicationScoped.class) Object ignored) {
-        subscriptions.forEach(Subscription::cancel);
-        clients.forEach(RabbitMQClient::stopAndForget);
+        subscriptions.forEach((channel, subscription) -> subscription.cancel());
+        clients.forEach((channel, rabbitMQClient) -> rabbitMQClient.stopAndAwait());
         clients.clear();
     }
 
@@ -417,8 +441,8 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
         return executionHolder.vertx();
     }
 
-    public void addClient(RabbitMQClient client) {
-        clients.add(client);
+    public void addClient(String channel, RabbitMQClient client) {
+        clients.put(channel, client);
     }
 
     /**
@@ -433,13 +457,17 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
             final RabbitMQConnectorCommonConfiguration config) {
         final String exchangeName = getExchangeName(config);
 
-        // Declare the exchange if we have been asked to do so
-        return Uni.createFrom().item(() -> Boolean.TRUE.equals(config.getExchangeDeclare()) ? null : exchangeName)
-                .onItem().ifNull().switchTo(() -> client.exchangeDeclare(exchangeName, config.getExchangeType(),
-                        config.getExchangeDurable(), config.getExchangeAutoDelete())
-                        .onItem().invoke(() -> log.exchangeEstablished(exchangeName))
-                        .onFailure().invoke(ex -> log.unableToEstablishExchange(exchangeName, ex))
-                        .onItem().transform(v -> exchangeName));
+        // Declare the exchange if we have been asked to do so and only when exchange name is not default ("")
+        boolean declareExchange = Boolean.TRUE.equals(config.getExchangeDeclare()) && exchangeName.length() != 0;
+        if (declareExchange) {
+            return client.exchangeDeclare(exchangeName, config.getExchangeType(),
+                    config.getExchangeDurable(), config.getExchangeAutoDelete())
+                    .onItem().invoke(() -> log.exchangeEstablished(exchangeName))
+                    .onFailure().invoke(ex -> log.unableToEstablishExchange(exchangeName, ex))
+                    .onItem().transform(v -> exchangeName);
+        } else {
+            return Uni.createFrom().item(exchangeName);
+        }
     }
 
     /**
@@ -473,6 +501,8 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
                 throw ex.illegalArgumentInvalidQueueTtl();
             }
         });
+        //x-max-priority
+        ic.getQueueXMaxPriority().ifPresent(maxPriority -> queueArgs.put("x-max-priority", ic.getQueueXMaxPriority()));
 
         return establishExchange(client, ic)
                 .onItem().transform(v -> Boolean.TRUE.equals(ic.getQueueDeclare()) ? null : queueName)
@@ -515,6 +545,10 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
         final List<String> routingKeys = Arrays.stream(ic.getRoutingKeys().split(","))
                 .map(String::trim).collect(Collectors.toList());
 
+        // Skip queue bindings if exchange name is default ("")
+        if (exchangeName.length() == 0) {
+            return Multi.createFrom().empty();
+        }
         return Multi.createFrom().iterable(routingKeys)
                 .onItem().call(routingKey -> client.queueBind(serverQueueName(queueName), exchangeName, routingKey))
                 .onItem().invoke(routingKey -> log.bindingEstablished(queueName, exchangeName, routingKey))
@@ -552,6 +586,14 @@ public class RabbitMQConnector implements IncomingConnectorFactory, OutgoingConn
     public void reportIncomingFailure(String channel, Throwable reason) {
         log.failureReported(channel, reason);
         incomingChannelStatus.put(channel, ChannelStatus.NOT_CONNECTED);
-        terminate(null);
+        Flow.Subscription subscription = subscriptions.remove(channel);
+        if (subscription != null) {
+            subscription.cancel();
+        }
+        RabbitMQClient client = clients.remove(channel);
+        if (client != null) {
+            // Called on vertx context, we can't block: stop clients without waiting
+            client.stopAndForget();
+        }
     }
 }

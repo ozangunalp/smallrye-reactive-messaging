@@ -2,7 +2,7 @@ package io.smallrye.reactive.messaging.providers.connectors;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import javax.enterprise.inject.spi.DeploymentException;
+import jakarta.enterprise.inject.spi.DeploymentException;
 
 import org.junit.jupiter.api.*;
 
@@ -15,12 +15,16 @@ public class ChannelNameConflictTest extends WeldTestBase {
         installConfig("src/test/resources/config/channel-name-conflict.properties");
     }
 
+    @AfterEach
+    void cleanup() {
+        releaseConfig();
+    }
+
     @Test
     public void test() {
         assertThatThrownBy(() -> {
             initializer.addBeanClasses(DummyBean.class);
             initialize();
         }).isInstanceOf(DeploymentException.class);
-
     }
 }

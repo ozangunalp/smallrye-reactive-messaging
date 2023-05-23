@@ -9,7 +9,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import org.apache.camel.CamelContext;
 import org.eclipse.microprofile.config.ConfigProvider;
@@ -19,6 +19,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import io.smallrye.config.SmallRyeConfigProviderResolver;
+import io.smallrye.reactive.messaging.camel.CamelCdiLite;
 import io.smallrye.reactive.messaging.camel.CamelConnector;
 import io.smallrye.reactive.messaging.camel.CamelMessage;
 import io.smallrye.reactive.messaging.camel.CamelTestBase;
@@ -37,6 +38,7 @@ public class FailureHandlerTest extends CamelTestBase {
 
     private MyReceiverBean deploy() {
         Weld weld = new Weld();
+        weld.addBeanClass(CamelCdiLite.class);
         weld.addBeanClass(MyReceiverBean.class);
 
         container = weld.initialize();

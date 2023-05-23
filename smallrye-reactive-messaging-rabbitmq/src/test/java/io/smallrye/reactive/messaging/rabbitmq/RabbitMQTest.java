@@ -367,6 +367,40 @@ class RabbitMQTest extends RabbitMQBrokerTestBase {
     }
 
     /**
+     * Verifies that messages can be sent to RabbitMQ.
+     *
+     * @throws InterruptedException
+     */
+    @Test
+    void testSendingNullPayloadsToRabbitMQ() throws InterruptedException {
+        final String exchangeName = "exchg1";
+        final String routingKey = "normal";
+
+        CountDownLatch latch = new CountDownLatch(10);
+        usage.consume(exchangeName, routingKey, v -> latch.countDown());
+
+        weld.addBeanClass(NullProducingBean.class);
+
+        new MapBasedConfig()
+                .put("mp.messaging.outgoing.sink.exchange.name", exchangeName)
+                .put("mp.messaging.outgoing.sink.exchange.declare", false)
+                .put("mp.messaging.outgoing.sink.default-routing-key", routingKey)
+                .put("mp.messaging.outgoing.sink.connector", RabbitMQConnector.CONNECTOR_NAME)
+                .put("mp.messaging.outgoing.sink.host", host)
+                .put("mp.messaging.outgoing.sink.port", port)
+                .put("mp.messaging.outgoing.sink.tracing.enabled", false)
+                .put("rabbitmq-username", username)
+                .put("rabbitmq-password", password)
+                .put("rabbitmq-reconnect-attempts", 0)
+                .write();
+
+        container = weld.initialize();
+        await().until(() -> isRabbitMQConnectorAvailable(container));
+
+        assertThat(latch.await(3, TimeUnit.MINUTES)).isTrue();
+    }
+
+    /**
      * Verifies that messages can be received from RabbitMQ.
      */
     @Test
@@ -485,6 +519,44 @@ class RabbitMQTest extends RabbitMQBrokerTestBase {
 
         AtomicInteger counter = new AtomicInteger();
         usage.produce(exchangeName, queueName, routingKey, 10, counter::getAndIncrement, "application/invalid");
+        await().atMost(1, TimeUnit.MINUTES).until(() -> list.size() >= 10);
+        assertThat(bean.getTypeCasts()).isEqualTo(0);
+        assertThat(list).containsExactly(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+    }
+
+    /**
+     * Verifies that default exchange name can be set with ("")
+     */
+    @Test
+    void testDefaultExchangeName() {
+        final String exchangeName = "\"\"";
+        final String queueName = "q5";
+        new MapBasedConfig()
+                .put("mp.messaging.incoming.data.exchange.name", exchangeName)
+                .put("mp.messaging.incoming.data.queue.name", queueName)
+                .put("mp.messaging.incoming.data.connector", RabbitMQConnector.CONNECTOR_NAME)
+                .put("mp.messaging.incoming.data.host", host)
+                .put("mp.messaging.incoming.data.port", port)
+                .put("mp.messaging.incoming.data.tracing-enabled", false)
+                .put("mp.messaging.incoming.data.content-type-override", HttpHeaderValues.TEXT_PLAIN.toString())
+                .put("rabbitmq-username", username)
+                .put("rabbitmq-password", password)
+                .put("rabbitmq-reconnect-attempts", 0)
+                .write();
+
+        weld.addBeanClass(ConsumptionBean.class);
+
+        container = weld.initialize();
+        await().until(() -> isRabbitMQConnectorAvailable(container));
+        ConsumptionBean bean = container.getBeanManager().createInstance().select(ConsumptionBean.class).get();
+
+        await().until(() -> isRabbitMQConnectorAvailable(container));
+
+        List<Integer> list = bean.getResults();
+        assertThat(list).isEmpty();
+
+        AtomicInteger counter = new AtomicInteger();
+        usage.produce("", queueName, queueName, 10, counter::getAndIncrement, "application/invalid");
         await().atMost(1, TimeUnit.MINUTES).until(() -> list.size() >= 10);
         assertThat(bean.getTypeCasts()).isEqualTo(0);
         assertThat(list).containsExactly(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);

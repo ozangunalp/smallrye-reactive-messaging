@@ -5,17 +5,16 @@ import static io.smallrye.reactive.messaging.providers.i18n.ProviderExceptions.e
 import static io.smallrye.reactive.messaging.providers.i18n.ProviderLogging.log;
 
 import java.util.*;
+import java.util.concurrent.Flow;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.inject.Any;
-import javax.enterprise.inject.Instance;
-import javax.inject.Inject;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.spi.*;
-import org.reactivestreams.Publisher;
-import org.reactivestreams.Subscriber;
 
 import io.smallrye.mutiny.Multi;
 import io.smallrye.reactive.messaging.ChannelRegistar;
@@ -23,6 +22,7 @@ import io.smallrye.reactive.messaging.ChannelRegistry;
 import io.smallrye.reactive.messaging.PublisherDecorator;
 import io.smallrye.reactive.messaging.connector.InboundConnector;
 import io.smallrye.reactive.messaging.connector.OutboundConnector;
+import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
 
 /**
  * Look for stream factories and get instances.
@@ -35,7 +35,7 @@ public class ConfiguredChannelFactory implements ChannelRegistar {
     private final ConnectorFactories factories;
 
     @Inject
-    private Instance<PublisherDecorator> publisherDecoratorInstance;
+    Instance<PublisherDecorator> publisherDecoratorInstance;
 
     // CDI requirement for normal scoped beans
     protected ConfiguredChannelFactory() {
@@ -108,7 +108,7 @@ public class ConfiguredChannelFactory implements ChannelRegistar {
 
     /**
      * By spec, you cannot use the same channel name in an `incoming` configuration and `outgoing` configuration.
-     * This method throws a {@link javax.enterprise.inject.spi.DeploymentException} is this case is detected.
+     * This method throws a {@link jakarta.enterprise.inject.spi.DeploymentException} is this case is detected.
      *
      * @param sourceConfiguration the source configurations
      * @param sinkConfiguration the sink configurations
@@ -160,7 +160,7 @@ public class ConfiguredChannelFactory implements ChannelRegistar {
         return config.getValue("connector", String.class);
     }
 
-    private Publisher<? extends Message<?>> createPublisher(String name, Config config) {
+    private Flow.Publisher<? extends Message<?>> createPublisher(String name, Config config) {
         // Extract the type and throw an exception if missing
         String connector = getConnectorAttribute(config);
 
@@ -169,7 +169,7 @@ public class ConfiguredChannelFactory implements ChannelRegistar {
             throw ex.illegalArgumentUnknownConnector(name);
         }
 
-        Multi<? extends Message<?>> publisher = Multi.createFrom().publisher(inboundConnector.getPublisher(config));
+        Multi<? extends Message<?>> publisher = MultiUtils.publisher(inboundConnector.getPublisher(config));
 
         for (PublisherDecorator decorator : getSortedInstances(publisherDecoratorInstance)) {
             publisher = decorator.decorate(publisher, name, true);
@@ -178,7 +178,7 @@ public class ConfiguredChannelFactory implements ChannelRegistar {
         return publisher;
     }
 
-    private Subscriber<? extends Message<?>> createSubscriber(String name, Config config) {
+    private Flow.Subscriber<? extends Message<?>> createSubscriber(String name, Config config) {
         // Extract the type and throw an exception if missing
         String connector = getConnectorAttribute(config);
 

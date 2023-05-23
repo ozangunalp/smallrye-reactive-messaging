@@ -72,12 +72,13 @@ import org.eclipse.microprofile.reactive.streams.operators.SubscriberBuilder;
  * In the previous configuration, the reactive messaging implementation would need to find the
  * {@link OutgoingConnectorFactory} implementation qualified with the {@link Connector} qualifier with the value
  * {@code acme.kafka} to create the {@code my-channel} <em>subscriber</em>. Note that if
- * the connector cannot be found, the deployment must be failed with a {@link javax.enterprise.inject.spi.DeploymentException}.
+ * the connector cannot be found, the deployment must be failed with a
+ * {@link jakarta.enterprise.inject.spi.DeploymentException}.
  * <p>
  * The {@link #getSubscriberBuilder(Config)} is called for every <em>channel</em> that needs to be created. The
  * {@link Config} object passed to the method contains a subset of the global configuration, and with the prefixes removed.
  * So for the previous configuration, it would be:
- * 
+ *
  * <pre>
  * bootstrap.servers = localhost:9092
  * topic = my-topic

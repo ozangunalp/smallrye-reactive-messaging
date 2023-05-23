@@ -1,6 +1,6 @@
 package amqp.customization;
 
-import javax.enterprise.inject.Produces;
+import jakarta.enterprise.inject.Produces;
 
 import io.smallrye.common.annotation.Identifier;
 import io.vertx.amqp.AmqpClientOptions;
@@ -11,7 +11,7 @@ public class ClientProducers {
 
     // <named>
     @Produces
-    @Identifier("my-named-options")
+    @Identifier("my-options")
     public AmqpClientOptions getNamedOptions() {
         // You can use the produced options to configure the TLS connection
         PemKeyCertOptions keycert = new PemKeyCertOptions()

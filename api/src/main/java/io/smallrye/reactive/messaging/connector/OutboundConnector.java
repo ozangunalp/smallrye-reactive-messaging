@@ -1,12 +1,12 @@
 package io.smallrye.reactive.messaging.connector;
 
 import java.util.NoSuchElementException;
+import java.util.concurrent.Flow.Subscriber;
 
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.spi.Connector;
 import org.eclipse.microprofile.reactive.messaging.spi.ConnectorFactory;
-import org.reactivestreams.Subscriber;
 
 /**
  * SPI used to implement a connector managing a sink of messages for a specific <em>transport</em>. For example, to
@@ -56,7 +56,8 @@ import org.reactivestreams.Subscriber;
  * In the previous configuration, the smallrye reactive messaging would need to find the
  * {@link OutboundConnector} implementation qualified with the {@link Connector} qualifier with the value
  * {@code acme.kafka} to create the {@code my-channel} <em>subscriber</em>. Note that if
- * the connector cannot be found, the deployment must be failed with a {@link javax.enterprise.inject.spi.DeploymentException}.
+ * the connector cannot be found, the deployment must be failed with a
+ * {@link jakarta.enterprise.inject.spi.DeploymentException}.
  * <p>
  * The {@link #getSubscriber(Config)} is called for every <em>channel</em> that needs to be created. The
  * {@link Config} object passed to the method contains a subset of the global configuration, and with the prefixes
@@ -77,7 +78,7 @@ import org.reactivestreams.Subscriber;
  * This class is specific to SmallRye and is uses internally instead of
  * {@link org.eclipse.microprofile.reactive.messaging.spi.OutgoingConnectorFactory}. Instead of a
  * {@link org.eclipse.microprofile.reactive.streams.operators.SubscriberBuilder}, it returns a
- * {@link org.reactivestreams.Subscriber}.
+ * {@link Subscriber}.
  */
 public interface OutboundConnector extends ConnectorFactory {
 

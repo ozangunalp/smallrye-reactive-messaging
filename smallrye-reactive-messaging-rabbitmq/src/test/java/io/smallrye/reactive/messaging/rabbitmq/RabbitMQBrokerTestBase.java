@@ -1,8 +1,8 @@
 package io.smallrye.reactive.messaging.rabbitmq;
 
-import javax.enterprise.inject.Any;
-import javax.enterprise.inject.se.SeContainer;
-import javax.enterprise.util.AnnotationLiteral;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.se.SeContainer;
+import jakarta.enterprise.util.AnnotationLiteral;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.jboss.weld.environment.se.WeldContainer;
@@ -32,18 +32,18 @@ public class RabbitMQBrokerTestBase {
 
     private static final GenericContainer<?> RABBIT = new GenericContainer<>(
             DockerImageName.parse("rabbitmq:3-management"))
-                    .withExposedPorts(5672, 15672)
-                    .withLogConsumer(of -> LOGGER.info(of.getUtf8String()))
-                    .waitingFor(Wait.forLogMessage(".*Server startup complete.*\\n", 1))
-                    .withCopyFileToContainer(MountableFile.forClasspathResource("rabbitmq/enabled_plugins"),
-                            "/etc/rabbitmq/enabled_plugins");
+            .withExposedPorts(5672, 15672)
+            .withLogConsumer(of -> LOGGER.info(of.getUtf8String()))
+            .waitingFor(Wait.forLogMessage(".*Server startup complete.*\\n", 1))
+            .withCopyFileToContainer(MountableFile.forClasspathResource("rabbitmq/enabled_plugins"),
+                    "/etc/rabbitmq/enabled_plugins");
 
     protected static String host;
     protected static int port;
     protected static int managementPort;
     final static String username = "guest";
     final static String password = "guest";
-    RabbitMQUsage usage;
+    protected RabbitMQUsage usage;
     ExecutionHolder executionHolder;
 
     @BeforeAll

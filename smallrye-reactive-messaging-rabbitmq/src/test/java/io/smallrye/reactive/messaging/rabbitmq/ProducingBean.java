@@ -1,14 +1,14 @@
 package io.smallrye.reactive.messaging.rabbitmq;
 
 import java.time.Duration;
+import java.util.concurrent.Flow.Publisher;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import org.eclipse.microprofile.reactive.messaging.Acknowledgment;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.Outgoing;
-import org.reactivestreams.Publisher;
 
 import io.smallrye.mutiny.Multi;
 

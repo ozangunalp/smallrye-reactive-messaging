@@ -8,7 +8,7 @@ import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Outgoing;
@@ -41,11 +41,9 @@ public class ConnectionSharingTest extends MqttTestBase {
         container = weld.initialize();
 
         App bean = container.getBeanManager().createInstance().select(App.class).get();
+        MqttConnector mqttConnector = this.container.select(MqttConnector.class, ConnectorLiteral.of("smallrye-mqtt")).get();
 
-        await()
-                .until(
-                        () -> this.container.select(MqttConnector.class, ConnectorLiteral.of("smallrye-mqtt")).get().isReady());
-
+        await().until(() -> mqttConnector.getReadiness().isOk());
         await().atMost(2, TimeUnit.MINUTES).until(() -> bean.prices().size() >= 10);
         assertThat(bean.prices()).isNotEmpty();
     }

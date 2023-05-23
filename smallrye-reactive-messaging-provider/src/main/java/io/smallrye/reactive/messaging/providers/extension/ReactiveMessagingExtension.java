@@ -6,11 +6,12 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.*;
+import java.util.concurrent.Flow;
 
-import javax.enterprise.event.Observes;
-import javax.enterprise.inject.Instance;
-import javax.enterprise.inject.spi.*;
-import javax.inject.Inject;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.spi.*;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.reactive.messaging.*;
 import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
@@ -59,7 +60,15 @@ public class ReactiveMessagingExtension implements Extension {
         workerPoolBeans.add(new WorkerPoolBean<>(annotatedType));
     }
 
-    <T extends Publisher<?>> void processStreamPublisherInjectionPoint(@Observes ProcessInjectionPoint<?, T> pip) {
+    <T extends Flow.Publisher<?>> void processStreamPublisherInjectionPoint(@Observes ProcessInjectionPoint<?, T> pip) {
+        Channel stream = ChannelProducer.getChannelQualifier(pip.getInjectionPoint());
+        if (stream != null) {
+            streamInjectionPoints.add(pip.getInjectionPoint());
+        }
+    }
+
+    <T extends Publisher<?>> void processStreamReactiveStreamPublisherInjectionPoint(
+            @Observes ProcessInjectionPoint<?, T> pip) {
         Channel stream = ChannelProducer.getChannelQualifier(pip.getInjectionPoint());
         if (stream != null) {
             streamInjectionPoints.add(pip.getInjectionPoint());

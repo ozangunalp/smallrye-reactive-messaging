@@ -5,8 +5,8 @@ import static org.awaitility.Awaitility.await;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.inject.Inject;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
@@ -103,7 +103,13 @@ public class SubscriptionCancellationTest extends WeldTestBaseWithoutTails {
         public void generate() {
             new Thread(() -> {
                 while (!emitter.isCancelled()) {
-                    emitter.send(1L);
+                    try {
+                        emitter.send(1L);
+                    } catch (IllegalStateException e) {
+                        // Cancellation may happen concurrently,
+                        // ignore and continue
+                        break;
+                    }
                 }
                 cancelled_a.set(true);
             }).start();

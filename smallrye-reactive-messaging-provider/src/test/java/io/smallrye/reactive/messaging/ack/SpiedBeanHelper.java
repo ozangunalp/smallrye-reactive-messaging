@@ -6,14 +6,13 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
-import javax.annotation.Priority;
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.context.BeforeDestroyed;
-import javax.enterprise.event.Observes;
-import javax.enterprise.event.Reception;
+import jakarta.annotation.Priority;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.BeforeDestroyed;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.event.Reception;
 
 import org.eclipse.microprofile.reactive.messaging.Message;
-import org.reactivestreams.Publisher;
 
 import io.smallrye.mutiny.Multi;
 
@@ -47,7 +46,7 @@ public class SpiedBeanHelper {
         executor.shutdownNow();
     }
 
-    protected Publisher<Message<String>> source(String id) {
+    protected Flow.Publisher<Message<String>> source(String id) {
         return Multi.createFrom().items("a", "b", "c", "d", "e")
                 .map(payload -> Message.of(payload, () -> CompletableFuture.runAsync(() -> {
                     nap();

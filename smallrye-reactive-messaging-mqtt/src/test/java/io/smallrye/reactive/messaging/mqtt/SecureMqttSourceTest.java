@@ -5,18 +5,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import java.util.*;
+import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.eclipse.microprofile.reactive.messaging.Message;
-import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
 import org.jboss.weld.environment.se.Weld;
 import org.jboss.weld.environment.se.WeldContainer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+import io.smallrye.mutiny.Multi;
 import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
 
 @Disabled("does not work on CI - must be investigated")
@@ -43,12 +44,13 @@ public class SecureMqttSourceTest extends SecureMqttTestBase {
         config.put("username", "user");
         config.put("password", "foo");
         config.put("channel-name", topic);
-        MqttSource source = new MqttSource(vertx, new MqttConnectorIncomingConfiguration(new MapBasedConfig(config)));
+        MqttSource source = new MqttSource(vertx, new MqttConnectorIncomingConfiguration(new MapBasedConfig(config)),
+                null);
 
         List<MqttMessage<?>> messages = new ArrayList<>();
-        PublisherBuilder<MqttMessage<?>> stream = source.getSource();
-        stream.forEach(messages::add).run();
-        await().until(source::isReady);
+        Flow.Publisher<? extends MqttMessage<?>> stream = source.getSource();
+        Multi.createFrom().publisher(stream).subscribe().with(messages::add);
+        awaitUntilReady(source);
         pause();
         AtomicInteger counter = new AtomicInteger();
         new Thread(() -> usage.produceIntegers(topic, 10, null,
@@ -60,7 +62,7 @@ public class SecureMqttSourceTest extends SecureMqttTestBase {
                 .map(x -> (byte[]) x)
                 .map(bytes -> Integer.valueOf(new String(bytes)))
                 .collect(Collectors.toList()))
-                        .containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+                .containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
     }
 
     @Test

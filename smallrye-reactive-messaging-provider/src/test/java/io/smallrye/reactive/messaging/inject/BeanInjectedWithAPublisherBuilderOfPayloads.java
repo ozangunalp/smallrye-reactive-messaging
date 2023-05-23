@@ -2,13 +2,14 @@ package io.smallrye.reactive.messaging.inject;
 
 import java.util.List;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.inject.Inject;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
 
 import io.smallrye.mutiny.Multi;
+import mutiny.zero.flow.adapters.AdaptersToFlow;
 
 @ApplicationScoped
 public class BeanInjectedWithAPublisherBuilderOfPayloads {
@@ -25,7 +26,7 @@ public class BeanInjectedWithAPublisherBuilderOfPayloads {
 
     public List<String> consume() {
         return Multi.createBy().concatenating()
-                .streams(constructor.buildRs(), field.buildRs())
+                .streams(AdaptersToFlow.publisher(constructor.buildRs()), AdaptersToFlow.publisher(field.buildRs()))
                 .collect().asList()
                 .await().indefinitely();
     }

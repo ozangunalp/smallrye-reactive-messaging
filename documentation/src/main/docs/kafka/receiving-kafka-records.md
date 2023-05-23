@@ -115,6 +115,25 @@ The Kafka connector supports three strategies:
     there are poison pill messages. This strategy is the default if
     `enable.auto.commit` is not explicitly set to `true`.
 
+-   `checkpoint` allows persisting consumer offsets on a "state store",
+    instead of committing them back to the Kafka broker. Using the
+    `CheckpointMetadata` API, consumer code can persist a processing
+    state with the offset to mark the progress of a consumer.
+    When the processing continues from a previously persisted offset,
+    it seeks the Kafka consumer to that offset and also restores the
+    persisted state, continuing the stateful processing from where it
+    left off. The `checkpoint` strategy holds locally the processing
+    state associated with the latest offset, and persists it
+    periodically to the state store (period specified by
+    `auto.commit.interval.ms` (default: 5000)). The connector will be
+    marked as unhealthy if no processing state is persisted to the state
+    store in `checkpoint.unsynced-state-max-age.ms` (default: 10000).
+    Using the `CheckpointMetadata` API the user code can force to persist
+    the state on message ack. If `checkpoint.unsynced-state-max-age.ms`
+    is set to less than or equal to 0, it does not perform any health
+    check verification. For more information, see
+    [Stateful processing with Checkpointing](#stateful-processing-with-checkpointing)
+
 -   `latest` commits the record offset received by the Kafka consumer as
     soon as the associated message is acknowledged (if the offset is
     higher than the previously committed offset). This strategy provides
@@ -159,7 +178,15 @@ strategy is applied. The Kafka connector supports 3 strategies:
     processed correctly is committed, but the record is written to a
     (Kafka) *dead letter queue* topic.
 
+-   `delayed-retry-topic` - the offset of the record that has not been
+    processed correctly is still committed, but the record is written to
+    a series of Kafka topics for retrying the processing with some delay.
+    This allows retrying failed records by reconsuming them later without
+    blocking the processing of the latest records.
+
 The strategy is selected using the `failure-strategy` attribute.
+
+### Dead Letter Queue
 
 In the case of `dead-letter-queue`, you can configure the following
 attributes:
@@ -219,6 +246,81 @@ If the instance is present, the following properties will be used:
 
 -   headers; combined with the original record’s headers, as well as the
     `dead-letter-*` headers described above
+
+### Delayed Retry Topic
+
+!!!Experimental
+    Delayed retry topic feature is experimental.
+
+The delayed retry topic strategy allows failed records to be automatically retried by forwarding them to a series of retry topics.
+Each retry topic is associated with a specific delay time, which is expressed in milliseconds.
+When a record processing fails, it is forwarded to the first retry topic.
+The failure strategy then consumes these records and dispatches them to be retried again once the delay time of the topic has elapsed.
+
+If the processing of a record fails again, the message is forwarded to the next topic in the list, with possibly a longer delay time.
+If the processing of a record keeps failing, it will eventually be abandoned.
+Alternatively, if the `dead-letter-queue.topic` property is configured, the record will be sent to the dead letter queue.
+
+The Kafka producer client used when forwarding records to retry topics can be configured using the *dead-letter-queue* properties
+namely, `dead-letter-queue.producer-client-id`, `dead-letter-queue.key.serializer` and `dead-letter-queue.value.serializer`.
+
+Delayed retry topics and delays can be configured with following attributes:
+
+- `delayed-retry-topic.topics` :
+The comma-separated list of retry topics, each one suffixed with `_[DELAY_IN_MILLISECONDS]` for indicating the delay time.
+For example, `my_retry_topic_2000,my_retry_topic_4000,my_retry_topic_10000` will use three topics
+*my_retry_topic_2000*, *my_retry_topic_4000* and *my_retry_topic_10000*, with 2000ms 4000ms and 10000ms respectively.
+
+    If not configured the source channel name is used, with 10, 20 and 50 seconds of delay,
+    ex. for a channel named `source`, retry topics will be `source_retry_10000`, `source_retry_20000`, `source_retry_50000`.
+
+- `delayed-retry-topic.max-retries` :
+The maximum number of retries before abandoning the retries.
+If configured higher than the number of retry topics the last topic is used until maximum number of retries is reached.
+This can be configured to use a single retry topic with a fixed delay and multiple retries.
+
+    For example, `delayed-retry-topic.topics=source_retry_10000` and `delayed-retry-topic.max-retries=4` will forward failed records
+    to the topic *source_retry_10000* with maximum of 4 retries.
+
+- `delayed-retry-topic.timeout` :
+The global timeout in milliseconds for a retried record.
+The timeout is calculated from the first failure for a record.
+If the next retry will reach the timeout, instead of forwarding to the retry topic the retry is abandoned and,
+if configured, the record is forwarded to the dead letter queue.
+
+    The default is 120 seconds.
+
+!!!Important
+    While you can use [Smallrye Fault Tolerance to retry processing](#retrying-processing),
+    it will block the processing of further messages until the retried record is processed successfully, or abandoned.
+
+    Delayed retry topic failure strategy allows effectively implementing non-blocking retries.
+    But it will not preserve the order of messages inside a topic-partition.
+
+The record written on the delayed retry topics will preserve the key and partition of the original record.
+It also contains the original record’s headers, as well as a set of additional headers about the original record:
+
+- `delayed-retry-count` the current number of retries
+- `delayed-retry-original-timestamp` the original timestamp of the record
+- `delayed-retry-first-processing-timestamp` the first processing timestamp of the record
+- `delayed-retry-reason` the reason of the failure (the `Throwable` passed to `nack()`)
+- `delayed-retry-cause` the cause of the failure (the `getCause()` of the `Throwable` passed to `nack()`), if any
+- `delayed-retry-topic` the original topic of the record
+- `delayed-retry-partition` the original partition of the record
+- `delayed-retry-offset` the original offset of the record
+- `delayed-retry-exception-class-name` the class name of the throwable passed to `nack()`
+- `delayed-retry-cause-class-name` the class name of the the `getCause()` of the `Throwable` passed to `nack()`, if any
+
+As for the dead letter queue it is possible to change forwarded values by providing a `OutgoingKafkaRecordMetadata`
+when the message is nacked using `Message.nack(Throwable, Metadata)`.
+
+!!! Note "Multiple partitions"
+    The delayed retry topic strategy does not create retry topics automatically.
+    If the source topic has multiple partitions, delayed retry and dead letter queue topics would need to be setup with the same number of partitions.
+
+    It is possible to scale consumer application instances according to the number of partitions.
+    But it is not guaranteed that the retry topics consumer will be assigned the same partition(s) as the main topic consumer.
+    Therefore, retry processing of a record can happen in an other instance.
 
 ## Custom commit and failure strategies
 
@@ -501,6 +603,87 @@ The configured commit strategy will be applied for these records only.
 Conversely, if the processing throws an exception, all messages are
 *nacked*, applying the failure strategy for all the records inside the
 batch.
+
+## Stateful processing with Checkpointing
+
+!!!warning "Experimental"
+    Checkpointing is experimental, and APIs and features are subject
+    to change in the future.
+
+The `checkpoint` commit strategy allows for a Kafka incoming channel to
+manage topic-partition offsets, not by committing on the Kafka broker,
+but by persisting consumers' advancement on a
+[_state store_](#implementing-state-stores).
+
+In addition to that, if the consumer builds an internal state as
+a result of consumed records, the topic-partition offset persisted
+to the state store can be associated with a _processing state_,
+saving the local state to the persistent store. When a consumer
+restarts or consumer group instances scale, i.e. when new partitions
+get assigned to the consumer, the checkpointing works by resuming the
+processing from the latest offset and its saved state.
+
+The `@Incoming` channel consumer code can manipulate the processing
+state through the `CheckpointMetadata` API:
+
+``` java
+{{ insert('kafka/inbound/KafkaCheckpointExample.java', 'code') }}
+```
+
+The `transform` method allows applying a transformation function to
+the current state, producing a changed state and registering it
+locally for checkpointing. By default, the local state is synced
+(persisted) to the state store periodically, period specified by
+`auto.commit.interval.ms`, (default: 5000). If `persistOnAck` flag
+is given, the latest state is persisted to the state store eagerly
+on message acknowledgment. The `setNext` method works similarly
+directly setting the latest state.
+
+The `checkpoint` commit strategy tracks when a processing state
+is last persisted for each topic-partition. If an outstanding state
+change can not be persisted for `checkpoint.unsynced-state-max-age.ms`
+(default: 10000), the channel is marked unhealthy.
+
+Where and how processing states are persisted is decided by the
+state store implementation. This can be configured on the incoming
+channel using `checkpoint.state-store` configuration property,
+using the state store factory identifier name.
+The serialization of state objects depends on the state store
+implementation. In order to instruct state stores for serialization
+can require configuring the type name of state objects
+using `checkpoint.state-type` property.
+
+In order to keep Smallrye Reactive Messaging free of persistence-related
+dependencies, this library includes only a default state store named `file`.
+It is based on Vert.x Filesystem API and stores the processing state
+in Json formatted files, in a local directory configured by the
+`checkpoint.file.state-dir` property. State files follow the naming
+scheme `[consumer-group-id]:[topic]:[partition]`.
+
+### Implementing State Stores
+
+State store implementations are required to implement `CheckpointStateStore`
+interface, and provide a managed bean implementing
+`CheckpointStateStore.Factory`, identified with `@Identifier` bean
+qualifier indicating the name of the state-store.
+The factory bean identifier indicates the name to configure on
+`checkpoint.state-store` config property.
+The factory is discovered as a CDI managed bean and state store is
+created once per channel:
+
+``` java
+{{ insert('kafka/inbound/MyCheckpointStateStore.java') }}
+```
+
+The checkpoint commit strategy calls the state store in following events:
+
+- `fetchProcessingState` : on partitions assigned, to seek the consumer to the latest offset.
+- `persistProcessingState` on partitions revoked, to persist the state of last processed record.
+- `persistProcessingState` on message acknowledgement, if a new state is set during the processing and `persistOnAck` flag is set.
+- `persistProcessingState` on `auto.commit.interval.ms` intervals, if a new state is set during processing.
+- `persistProcessingState` on channel shutdown.
+- `close` on channel shutdown.
+
 
 ## Configuration Reference
 

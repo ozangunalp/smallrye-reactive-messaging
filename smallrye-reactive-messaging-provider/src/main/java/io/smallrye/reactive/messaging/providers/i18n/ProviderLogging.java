@@ -2,7 +2,7 @@ package io.smallrye.reactive.messaging.providers.i18n;
 
 import java.util.Set;
 
-import javax.enterprise.inject.spi.Bean;
+import jakarta.enterprise.inject.spi.Bean;
 
 import org.jboss.logging.BasicLogger;
 import org.jboss.logging.Logger;
@@ -122,11 +122,17 @@ public interface ProviderLogging extends BasicLogger {
     void materializationCompleted(long duration);
 
     @LogMessage(level = Logger.Level.WARN)
-    @Message(id = 237, value = "Use of @javax.inject.Named in Reactive Messaging is deprecated, use @io.smallrye.common.annotation.Identifier instead")
+    @Message(id = 237, value = "Use of @jakarta.inject.Named in Reactive Messaging is deprecated, use @io.smallrye.common.annotation.Identifier instead")
     @Once
     void deprecatedNamed();
 
     @LogMessage(level = Logger.Level.INFO)
     @Message(id = 238, value = "No ExecutionHolder, disabling @Blocking support")
     void noExecutionHolderDisablingBlockingSupport();
+
+    @Message(id = 239, value = "Cannot specify both client-options-name and client-ssl-context-name")
+    IllegalStateException cannotSpecifyBothClientOptionsNameAndClientSslContextName();
+
+    @Message(id = 240, value = "Could not find an SSLContext bean with the @Identifier=%s")
+    IllegalStateException couldFindSslContextWithIdentifier(String sslContextIdentifier);
 }

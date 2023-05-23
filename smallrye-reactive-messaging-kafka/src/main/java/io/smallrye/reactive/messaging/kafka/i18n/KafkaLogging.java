@@ -63,8 +63,9 @@ public interface KafkaLogging extends BasicLogger {
     void unableToSendRecord(@Cause Throwable t);
 
     @LogMessage(level = Logger.Level.DEBUG)
-    @Message(id = 18211, value = "Message %s sent successfully to Kafka topic '%s'")
-    void successfullyToTopic(org.eclipse.microprofile.reactive.messaging.Message<?> message, String topic);
+    @Message(id = 18211, value = "Message %s sent successfully to Kafka topic-partition '%s-%d', with offset %d")
+    void successfullyToTopic(org.eclipse.microprofile.reactive.messaging.Message<?> message, String topic, int partition,
+            long offset);
 
     @LogMessage(level = Logger.Level.ERROR)
     @Message(id = 18212, value = "Message %s was not sent to Kafka topic '%s' - nacking message")
@@ -258,7 +259,7 @@ public interface KafkaLogging extends BasicLogger {
     void unableToSerializeMessage(String topic, @Cause Throwable t);
 
     @LogMessage(level = Logger.Level.ERROR)
-    @Message(id = 18261, value = "Unable to initialize transactions for producer from channel %s.")
+    @Message(id = 18261, value = "Unable to initialize producer from channel %s.")
     void unableToInitializeProducer(String channel, @Cause Throwable t);
 
     @LogMessage(level = Logger.Level.WARN)
@@ -268,4 +269,74 @@ public interface KafkaLogging extends BasicLogger {
     @LogMessage(level = Logger.Level.FATAL)
     @Message(id = 18263, value = "The serialization failure handler `%s` throws an exception")
     void serializationFailureHandlerFailure(String instance, @Cause Throwable t);
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 18264, value = "No `checkpoint.state-store` given to use with checkpoint commit strategy. `file` will be used.")
+    void checkpointDefaultStateStore();
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 18265, value = "Will not health check checkpoint commit strategy for consumer '%s'.")
+    void disableCheckpointCommitStrategyHealthCheck(String consumerId);
+
+    @LogMessage(level = Logger.Level.DEBUG)
+    @Message(id = 18266, value = "Will mark checkpoint commit strategy for consumer '%s' as unhealthy if processing state go more than %d milliseconds without being persisted.")
+    void setCheckpointCommitStrategyUnsyncedStateMaxAge(String consumerId, int unsyncedStateMaxAge);
+
+    @LogMessage(level = Logger.Level.DEBUG)
+    @Message(id = 18267, value = "Partitions assigned to client %s : %s with initial state %s")
+    void checkpointPartitionsAssigned(String consumerId, Collection<TopicPartition> assignments, String state);
+
+    @LogMessage(level = Logger.Level.ERROR)
+    @Message(id = 18268, value = "Failed fetching state on partitions assigned to client %s : %s")
+    void failedCheckpointPartitionsAssigned(String consumerId, Collection<TopicPartition> assignments, @Cause Throwable cause);
+
+    @LogMessage(level = Logger.Level.DEBUG)
+    @Message(id = 18269, value = "Partitions revoked from client %s: %s with state to persist %s")
+    void checkpointPartitionsRevoked(String consumerId, Collection<TopicPartition> assignments, String state);
+
+    @LogMessage(level = Logger.Level.DEBUG)
+    @Message(id = 18270, value = "Persisted state for client %s : %s")
+    void checkpointPersistedState(String consumerId, String state);
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 18271, value = "Failed persisting state for %s : %s")
+    void checkpointFailedPersistingState(String consumerId, String state, @Cause Throwable cause);
+
+    @LogMessage(level = Logger.Level.DEBUG)
+    @Message(id = 18272, value = "Failed persisting state but can be retried for %s : %s")
+    void checkpointFailedPersistingStateRetryable(String consumerId, String state, @Cause Throwable cause);
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 18273, value = "Checkpoint commit strategy processing state type not found for channel %s : %s")
+    void checkpointStateTypeNotFound(String channel, String fqcn);
+
+    @LogMessage(level = Logger.Level.INFO)
+    @Message(id = 18274, value = "Error caught in producer interceptor `onSend` for channel %s")
+    void interceptorOnSendError(String channel, @Cause Throwable cause);
+
+    @LogMessage(level = Logger.Level.TRACE)
+    @Message(id = 18275, value = "Error caught in producer interceptor `onAcknowledge` for channel %s")
+    void interceptorOnAcknowledgeError(String channel, @Cause Throwable cause);
+
+    @LogMessage(level = Logger.Level.TRACE)
+    @Message(id = 18276, value = "Error caught in producer interceptor `close` for channel %s")
+    void interceptorCloseError(String channel, @Cause Throwable cause);
+
+    @LogMessage(level = Logger.Level.INFO)
+    @Message(id = 18277, value = "Delayed retry topics configured for channel `%s` with topics `%s`, max retries, `%d`, timeout `%d`ms, dlq topic `%s`")
+    void delayedRetryTopic(String channel, Collection<String> retryTopics, int maxRetries, long timeout,
+            String deadLetterTopic);
+
+    @LogMessage(level = Logger.Level.INFO)
+    @Message(id = 18278, value = "A message sent to channel `%s` has been nacked, sending the record to topic %s")
+    void delayedRetryNack(String channel, String topic);
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 18279, value = "A message sent to channel `%s` reached delayed retry timeout `%s` milliseconds reached for record `%s`")
+    void delayedRetryTimeout(String channel, long timeout, String record);
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 18280, value = "A message sent to channel `%s` has been nacked and won't be retried again. Configure `dead-letter-queue.topic` for sending the record to a dead letter topic")
+    void delayedRetryNoDlq(String channel);
+
 }

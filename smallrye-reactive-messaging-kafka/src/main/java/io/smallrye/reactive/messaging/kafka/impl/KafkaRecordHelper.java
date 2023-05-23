@@ -39,5 +39,4 @@ public class KafkaRecordHelper {
     public static boolean isNotBlank(String s) {
         return s != null && !s.trim().isEmpty();
     }
-
 }

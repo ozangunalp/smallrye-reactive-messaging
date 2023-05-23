@@ -5,15 +5,16 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.Assert.assertThrows;
 
 import java.util.*;
+import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.eclipse.microprofile.reactive.messaging.Message;
-import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import io.smallrye.mutiny.Multi;
 import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
 
 public class MutualTlsMqttSourceTest extends MutualTlsMqttTestBase {
@@ -41,12 +42,13 @@ public class MutualTlsMqttSourceTest extends MutualTlsMqttTestBase {
         config.put("ssl.truststore.location", "mosquitto-tls/client/client.ts");
         config.put("ssl.truststore.password", "password");
 
-        MqttSource source = new MqttSource(vertx, new MqttConnectorIncomingConfiguration(new MapBasedConfig(config)));
+        MqttSource source = new MqttSource(vertx, new MqttConnectorIncomingConfiguration(new MapBasedConfig(config)),
+                null);
 
         List<MqttMessage<?>> messages = new ArrayList<>();
-        PublisherBuilder<MqttMessage<?>> stream = source.getSource();
-        stream.forEach(messages::add).run();
-        await().until(source::isReady);
+        Flow.Publisher<? extends MqttMessage<?>> stream = source.getSource();
+        Multi.createFrom().publisher(stream).subscribe().with(messages::add);
+        awaitUntilReady(source);
         pause();
         AtomicInteger counter = new AtomicInteger();
         new Thread(() -> usage.produceIntegers(topic, 10, null,
@@ -58,7 +60,7 @@ public class MutualTlsMqttSourceTest extends MutualTlsMqttTestBase {
                 .map(x -> (byte[]) x)
                 .map(bytes -> Integer.valueOf(new String(bytes)))
                 .collect(Collectors.toList()))
-                        .containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+                .containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
     }
 
     void pause() {
@@ -87,7 +89,7 @@ public class MutualTlsMqttSourceTest extends MutualTlsMqttTestBase {
             config.put("ssl.truststore.type", "jks");
             config.put("ssl.truststore.location", "mosquitto-tls/client/client.ts");
 
-            new MqttSource(vertx, new MqttConnectorIncomingConfiguration(new MapBasedConfig(config)));
+            new MqttSource(vertx, new MqttConnectorIncomingConfiguration(new MapBasedConfig(config)), null);
         });
 
     }

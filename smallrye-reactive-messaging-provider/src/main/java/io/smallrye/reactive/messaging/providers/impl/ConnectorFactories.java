@@ -3,11 +3,11 @@ package io.smallrye.reactive.messaging.providers.impl;
 import java.util.HashMap;
 import java.util.Map;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.inject.Any;
-import javax.enterprise.inject.Instance;
-import javax.enterprise.inject.spi.*;
-import javax.inject.Inject;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.spi.*;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.reactive.messaging.spi.Connector;
 import org.eclipse.microprofile.reactive.messaging.spi.ConnectorLiteral;
@@ -17,6 +17,7 @@ import org.eclipse.microprofile.reactive.messaging.spi.OutgoingConnectorFactory;
 import io.smallrye.reactive.messaging.connector.InboundConnector;
 import io.smallrye.reactive.messaging.connector.OutboundConnector;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderExceptions;
+import mutiny.zero.flow.adapters.AdaptersToFlow;
 
 @ApplicationScoped
 public class ConnectorFactories {
@@ -77,11 +78,11 @@ public class ConnectorFactories {
     }
 
     private InboundConnector wrap(IncomingConnectorFactory cf) {
-        return config -> cf.getPublisherBuilder(config).buildRs();
+        return config -> AdaptersToFlow.publisher(cf.getPublisherBuilder(config).buildRs());
     }
 
     private OutboundConnector wrap(OutgoingConnectorFactory cf) {
-        return config -> cf.getSubscriberBuilder(config).build();
+        return config -> AdaptersToFlow.subscriber(cf.getSubscriberBuilder(config).build());
     }
 
     /**

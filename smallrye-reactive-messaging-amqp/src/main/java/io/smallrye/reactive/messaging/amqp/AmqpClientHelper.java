@@ -2,15 +2,24 @@ package io.smallrye.reactive.messaging.amqp;
 
 import static io.smallrye.reactive.messaging.amqp.i18n.AMQPExceptions.ex;
 import static io.smallrye.reactive.messaging.amqp.i18n.AMQPLogging.log;
+import static io.vertx.core.net.ClientOptionsBase.DEFAULT_METRICS_NAME;
 
 import java.util.Optional;
 
-import javax.enterprise.inject.Instance;
-import javax.enterprise.inject.literal.NamedLiteral;
+import javax.net.ssl.SSLContext;
 
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.literal.NamedLiteral;
+
+import io.netty.handler.ssl.ApplicationProtocolConfig;
+import io.netty.handler.ssl.IdentityCipherSuiteFilter;
+import io.netty.handler.ssl.JdkSslContext;
+import io.netty.handler.ssl.SslContext;
 import io.smallrye.common.annotation.Identifier;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderLogging;
 import io.vertx.amqp.AmqpClientOptions;
+import io.vertx.core.net.JdkSSLEngineOptions;
+import io.vertx.core.spi.tls.SslContextFactory;
 import io.vertx.mutiny.amqp.AmqpClient;
 import io.vertx.mutiny.core.Vertx;
 
@@ -21,14 +30,19 @@ public class AmqpClientHelper {
     }
 
     static AmqpClient createClient(AmqpConnector connector, AmqpConnectorCommonConfiguration config,
-            Instance<AmqpClientOptions> instance) {
+            Instance<AmqpClientOptions> amqpClientOptions, Instance<SSLContext> clientSslContexts) {
         AmqpClient client;
         Optional<String> clientOptionsName = config.getClientOptionsName();
+        Optional<String> clientSslContextName = config.getClientSslContextName();
+        if (clientOptionsName.isPresent() && clientSslContextName.isPresent()) {
+            throw ProviderLogging.log.cannotSpecifyBothClientOptionsNameAndClientSslContextName();
+        }
         Vertx vertx = connector.getVertx();
         if (clientOptionsName.isPresent()) {
-            client = createClientFromClientOptionsBean(vertx, instance, clientOptionsName.get(), config);
+            client = createClientFromClientOptionsBean(vertx, amqpClientOptions, clientOptionsName.get(), config);
         } else {
-            client = getClient(vertx, config);
+            SSLContext sslContext = getClientSslContext(clientSslContexts, clientSslContextName);
+            client = getClient(vertx, config, sslContext);
         }
         connector.addClient(client);
         return client;
@@ -130,6 +144,10 @@ public class AmqpClientHelper {
         if (isSetInChannelConfiguration("connect-timeout", config)) {
             custom.setConnectTimeout(channel.getConnectTimeout());
         }
+
+        if (DEFAULT_METRICS_NAME.equals(custom.getMetricsName())) {
+            custom.setMetricsName(channel.getMetricsName());
+        }
     }
 
     static AmqpClientOptions getOptionsFromChannel(AmqpConnectorCommonConfiguration config) {
@@ -158,18 +176,54 @@ public class AmqpClientHelper {
                 .setReconnectInterval(reconnectInterval)
                 .setConnectTimeout(connectTimeout);
 
+        options.setMetricsName("amqp|" + config.getChannel());
+
         config.getSniServerName().ifPresent(options::setSniServerName);
         config.getVirtualHost().ifPresent(options::setVirtualHost);
         return options;
     }
 
-    static AmqpClient getClient(Vertx vertx, AmqpConnectorCommonConfiguration config) {
+    static AmqpClient getClient(Vertx vertx, AmqpConnectorCommonConfiguration config, SSLContext sslContext) {
         try {
             AmqpClientOptions options = getOptionsFromChannel(config);
+            if (sslContext != null) {
+                options.setSslEngineOptions(new JdkSSLEngineOptions() {
+                    @Override
+                    public SslContextFactory sslContextFactory() {
+                        return new SslContextFactory() {
+                            @Override
+                            public SslContext create() {
+                                return new JdkSslContext(
+                                        sslContext,
+                                        true,
+                                        null,
+                                        IdentityCipherSuiteFilter.INSTANCE,
+                                        ApplicationProtocolConfig.DISABLED,
+                                        io.netty.handler.ssl.ClientAuth.NONE,
+                                        null,
+                                        false);
+                            }
+                        };
+                    }
+                });
+            }
             return AmqpClient.create(vertx, options);
         } catch (Exception e) {
             log.unableToCreateClient(e);
             throw ex.illegalStateUnableToCreateClient(e);
         }
+    }
+
+    private static SSLContext getClientSslContext(Instance<SSLContext> clientSslContexts,
+            Optional<String> clientSslContextName) {
+        if (clientSslContextName.isPresent()) {
+            Instance<SSLContext> context = clientSslContexts
+                    .select(Identifier.Literal.of(clientSslContextName.get()));
+            if (context.isUnsatisfied()) {
+                throw ProviderLogging.log.couldFindSslContextWithIdentifier(clientSslContextName.get());
+            }
+            return context.get();
+        }
+        return null;
     }
 }

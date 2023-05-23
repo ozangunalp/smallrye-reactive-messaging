@@ -82,7 +82,7 @@ public class ConsumerGroupsCompanion {
                 new RemoveMembersFromConsumerGroupOptions(Arrays.stream(groupInstanceIds)
                         .map(MemberToRemove::new).collect(Collectors.toList())))
                 .all())
-                        .await().atMost(kafkaApiTimeout);
+                .await().atMost(kafkaApiTimeout);
     }
 
     /*
@@ -93,6 +93,15 @@ public class ConsumerGroupsCompanion {
             List<TopicPartition> topicPartitions) {
         return toUni(adminClient.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions()
                 .topicPartitions(topicPartitions)).partitionsToOffsetAndMetadata());
+    }
+
+    /**
+     * @param groupId consumer group id
+     * @return the map of topic partitions to offset
+     */
+    public Map<TopicPartition, OffsetAndMetadata> offsets(String groupId) {
+        return toUni(adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata())
+                .await().atMost(kafkaApiTimeout);
     }
 
     /**

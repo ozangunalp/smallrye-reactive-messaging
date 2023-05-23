@@ -17,12 +17,12 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.inject.Instance;
-import javax.enterprise.inject.UnsatisfiedResolutionException;
-import javax.enterprise.inject.spi.DeploymentException;
-import javax.enterprise.util.TypeLiteral;
-import javax.inject.Named;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.UnsatisfiedResolutionException;
+import jakarta.enterprise.inject.spi.DeploymentException;
+import jakarta.enterprise.util.TypeLiteral;
+import jakarta.inject.Named;
 
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -36,11 +36,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.smallrye.reactive.messaging.health.HealthReport;
 import io.smallrye.reactive.messaging.kafka.CountKafkaCdiEvents;
 import io.smallrye.reactive.messaging.kafka.DeserializationFailureHandler;
-import io.smallrye.reactive.messaging.kafka.KafkaConnector;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
 import io.smallrye.reactive.messaging.kafka.KafkaConsumerRebalanceListener;
 import io.smallrye.reactive.messaging.kafka.LegacyMetadataTestUtils;
@@ -63,9 +61,8 @@ public class DeprecatedCommitStrategiesTest extends WeldTestBase {
     private KafkaSource<String, String> source2;
 
     @BeforeEach
-    public void initializing() {
+    public void setup() {
         vertx = Vertx.vertx();
-        KafkaConnector.TRACER = GlobalOpenTelemetry.getTracerProvider().get("io.smallrye.reactive.messaging.kafka");
         consumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);
     }
 
@@ -82,8 +79,10 @@ public class DeprecatedCommitStrategiesTest extends WeldTestBase {
 
     @Test
     void testLatestCommitStrategy() {
-        MapBasedConfig config = commonConfiguration().with("commit-strategy", "latest").with("client.id",
-                UUID.randomUUID().toString());
+        MapBasedConfig config = commonConfiguration()
+                .with("commit-strategy", "latest")
+                .with("lazy-client", true)
+                .with("client.id", UUID.randomUUID().toString());
         String group = UUID.randomUUID().toString();
         source = new KafkaSource<>(vertx, group,
                 new KafkaConnectorIncomingConfiguration(config), commitHandlerFactories, failureHandlerFactories,
@@ -185,6 +184,7 @@ public class DeprecatedCommitStrategiesTest extends WeldTestBase {
     @Test
     void testThrottledStrategy() {
         MapBasedConfig config = commonConfiguration()
+                .with("lazy-client", true)
                 .with("commit-strategy", "throttled")
                 .with("auto.commit.interval.ms", 100);
         String group = UUID.randomUUID().toString();
@@ -248,6 +248,7 @@ public class DeprecatedCommitStrategiesTest extends WeldTestBase {
     @Test
     void testThrottledStrategyWithManyRecords() {
         MapBasedConfig config = commonConfiguration()
+                .with("lazy-client", true)
                 .with("client.id", UUID.randomUUID().toString())
                 .with("commit-strategy", "throttled")
                 .with("auto.offset.reset", "earliest")
@@ -326,6 +327,7 @@ public class DeprecatedCommitStrategiesTest extends WeldTestBase {
     @Test
     void testThrottledStrategyWithTooManyUnackedMessages() throws Exception {
         MapBasedConfig config = commonConfiguration()
+                .with("lazy-client", true)
                 .with("client.id", UUID.randomUUID().toString())
                 .with("commit-strategy", "throttled")
                 .with("auto.offset.reset", "earliest")
@@ -421,7 +423,7 @@ public class DeprecatedCommitStrategiesTest extends WeldTestBase {
                 new KafkaConnectorIncomingConfiguration(config), commitHandlerFactories, failureHandlerFactories,
                 getConsumerRebalanceListeners(),
                 CountKafkaCdiEvents.noCdiEvents, getDeserializationFailureHandlers(), -1))
-                        .isInstanceOf(DeploymentException.class).hasMessageContaining("mine");
+                .isInstanceOf(DeploymentException.class).hasMessageContaining("mine");
     }
 
     @Test
@@ -429,6 +431,7 @@ public class DeprecatedCommitStrategiesTest extends WeldTestBase {
         addBeans(NamedRebalanceListener.class);
         MapBasedConfig config = commonConfiguration();
         config
+                .with("lazy-client", true)
                 .with("consumer-rebalance-listener.name", "mine")
                 .with("client.id", UUID.randomUUID().toString());
         String group = UUID.randomUUID().toString();

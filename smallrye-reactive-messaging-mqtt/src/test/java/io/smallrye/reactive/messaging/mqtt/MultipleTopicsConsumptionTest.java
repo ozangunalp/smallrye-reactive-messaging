@@ -10,7 +10,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.spi.ConnectorLiteral;
@@ -41,10 +41,9 @@ public class MultipleTopicsConsumptionTest extends MqttTestBase {
         container = weld.initialize();
 
         Consumers bean = container.getBeanManager().createInstance().select(Consumers.class).get();
+        MqttConnector mqttConnector = this.container.select(MqttConnector.class, ConnectorLiteral.of("smallrye-mqtt")).get();
 
-        await()
-                .until(
-                        () -> this.container.select(MqttConnector.class, ConnectorLiteral.of("smallrye-mqtt")).get().isReady());
+        await().until(() -> mqttConnector.getReadiness().isOk());
 
         assertThat(bean.prices()).isEmpty();
         assertThat(bean.products()).isEmpty();
@@ -68,10 +67,9 @@ public class MultipleTopicsConsumptionTest extends MqttTestBase {
         container = weld.initialize();
 
         Consumers bean = container.getBeanManager().createInstance().select(Consumers.class).get();
+        MqttConnector mqttConnector = this.container.select(MqttConnector.class, ConnectorLiteral.of("smallrye-mqtt")).get();
 
-        await()
-                .until(
-                        () -> this.container.select(MqttConnector.class, ConnectorLiteral.of("smallrye-mqtt")).get().isReady());
+        await().until(() -> mqttConnector.getReadiness().isOk());
 
         assertThat(bean.prices()).isEmpty();
         assertThat(bean.products()).isEmpty();

@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Flow.Subscriber;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -15,9 +16,7 @@ import org.eclipse.microprofile.reactive.messaging.Message;
 import org.jboss.weld.environment.se.Weld;
 import org.jboss.weld.environment.se.WeldContainer;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
-import org.reactivestreams.Subscriber;
 
 import io.smallrye.mutiny.Multi;
 import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
@@ -45,12 +44,13 @@ public class MqttSinkTest extends MqttTestBase {
                 v -> expected.getAndIncrement());
 
         Map<String, Object> config = new HashMap<>();
+        config.put("channel-name", topic);
         config.put("topic", topic);
         config.put("host", address);
         config.put("port", port);
-        MqttSink sink = new MqttSink(vertx, new MqttConnectorOutgoingConfiguration(new MapBasedConfig(config)));
+        MqttSink sink = new MqttSink(vertx, new MqttConnectorOutgoingConfiguration(new MapBasedConfig(config)), null);
 
-        Subscriber<? extends Message<?>> subscriber = sink.getSink().build();
+        Subscriber<? extends Message<?>> subscriber = sink.getSink();
         Multi.createFrom().range(0, 10)
                 .map(Message::of)
                 .subscribe((Subscriber<? super Message<Integer>>) subscriber);
@@ -62,7 +62,7 @@ public class MqttSinkTest extends MqttTestBase {
 
     @SuppressWarnings("unchecked")
     @Test
-    public void testSinkUsingChannelName() throws InterruptedException {
+    public void testSinkUsingIntegerAndChannelNameAsTopic() throws InterruptedException {
         String topic = UUID.randomUUID().toString();
         CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger expected = new AtomicInteger(0);
@@ -74,9 +74,9 @@ public class MqttSinkTest extends MqttTestBase {
         config.put("channel-name", topic);
         config.put("host", address);
         config.put("port", port);
-        MqttSink sink = new MqttSink(vertx, new MqttConnectorOutgoingConfiguration(new MapBasedConfig(config)));
+        MqttSink sink = new MqttSink(vertx, new MqttConnectorOutgoingConfiguration(new MapBasedConfig(config)), null);
 
-        Subscriber<? extends Message<?>> subscriber = sink.getSink().build();
+        Subscriber<? extends Message<?>> subscriber = sink.getSink();
         Multi.createFrom().range(0, 10)
                 .map(Message::of)
                 .subscribe((Subscriber<? super Message<Integer>>) subscriber);
@@ -97,12 +97,13 @@ public class MqttSinkTest extends MqttTestBase {
                 v -> expected.getAndIncrement());
 
         Map<String, Object> config = new HashMap<>();
+        config.put("channel-name", topic);
         config.put("topic", topic);
         config.put("host", address);
         config.put("port", port);
-        MqttSink sink = new MqttSink(vertx, new MqttConnectorOutgoingConfiguration(new MapBasedConfig(config)));
+        MqttSink sink = new MqttSink(vertx, new MqttConnectorOutgoingConfiguration(new MapBasedConfig(config)), null);
 
-        Subscriber<? extends Message<?>> subscriber = sink.getSink().build();
+        Subscriber<? extends Message<?>> subscriber = sink.getSink();
         Multi.createFrom().range(0, 10)
                 .map(i -> Integer.toString(i))
                 .map(Message::of)
@@ -113,9 +114,9 @@ public class MqttSinkTest extends MqttTestBase {
         assertThat(expected).hasValue(10);
     }
 
-    @RepeatedTest(5)
+    @Test
     public void testABeanProducingMessagesSentToMQTT() throws InterruptedException {
-        Clients.clear();
+
         Weld weld = baseWeld(getConfig());
         weld.addBeanClass(ProducingBean.class);
 
@@ -125,7 +126,25 @@ public class MqttSinkTest extends MqttTestBase {
                 v -> latch.countDown());
 
         container = weld.initialize();
-        assertThat(latch.await(1, TimeUnit.MINUTES)).isTrue();
+
+        assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+
+    }
+
+    @Test
+    public void testABeanProducingNullPayloadsSentToMQTT() throws InterruptedException {
+
+        Weld weld = baseWeld(getConfig());
+        weld.addBeanClass(NullProducingBean.class);
+
+        CountDownLatch latch = new CountDownLatch(1);
+        usage.consumeStrings("sink", 10, 10, TimeUnit.SECONDS, latch::countDown, v -> {
+        });
+
+        container = weld.initialize();
+
+        assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+
     }
 
     private MapBasedConfig getConfig() {

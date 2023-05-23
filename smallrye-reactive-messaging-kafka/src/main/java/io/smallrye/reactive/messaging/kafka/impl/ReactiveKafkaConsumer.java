@@ -11,11 +11,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
-import javax.enterprise.inject.Instance;
-import javax.enterprise.inject.literal.NamedLiteral;
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.literal.NamedLiteral;
 
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
@@ -28,23 +30,25 @@ import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.kafka.DeserializationFailureHandler;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
+import io.smallrye.reactive.messaging.kafka.KafkaConsumerRebalanceListener;
+import io.smallrye.reactive.messaging.kafka.commit.KafkaCommitHandler;
 import io.smallrye.reactive.messaging.kafka.fault.DeserializerWrapper;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderLogging;
 import io.vertx.core.Context;
 
 public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messaging.kafka.KafkaConsumer<K, V> {
 
-    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean closed = new AtomicBoolean(true);
 
     /**
      * Avoid concurrent call to `poll`
      */
     private final AtomicBoolean polling = new AtomicBoolean(false);
-    private final KafkaSource<K, V> source;
-
-    private Consumer<K, V> consumer;
-    private final KafkaConnectorIncomingConfiguration configuration;
+    private final Uni<Consumer<K, V>> consumerUni;
+    private final AtomicReference<Consumer<K, V>> consumerRef = new AtomicReference<>();
+    private final RuntimeKafkaSourceConfiguration configuration;
     private final Duration pollTimeout;
+    private final String consumerGroup;
     private ConsumerRebalanceListener rebalanceListener;
 
     private final AtomicBoolean paused = new AtomicBoolean();
@@ -55,46 +59,91 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
     private final Map<String, Object> kafkaConfiguration;
 
     public ReactiveKafkaConsumer(KafkaConnectorIncomingConfiguration config,
-            KafkaSource<K, V> source) {
-        this.configuration = config;
-        this.source = source;
-        kafkaConfiguration = getKafkaConsumerConfiguration(configuration, source.getConsumerGroup(),
-                source.getConsumerIndex());
+            Instance<DeserializationFailureHandler<?>> deserializationFailureHandlers,
+            String consumerGroup, int index,
+            BiConsumer<Throwable, Boolean> reportFailure,
+            Context context,
+            java.util.function.Consumer<Consumer<K, V>> onConsumerCreated) {
+        this(getKafkaConsumerConfiguration(config, consumerGroup, index),
+                createDeserializationFailureHandler(true, deserializationFailureHandlers, config),
+                createDeserializationFailureHandler(false, deserializationFailureHandlers, config),
+                RuntimeKafkaSourceConfiguration.buildFromConfiguration(config),
+                config.getLazyClient(),
+                config.getPollTimeout(),
+                config.getFailOnDeserializationFailure(),
+                onConsumerCreated,
+                reportFailure,
+                context);
+    }
 
-        Instance<DeserializationFailureHandler<?>> failureHandlers = source.getDeserializationFailureHandlers();
+    public ReactiveKafkaConsumer(Map<String, Object> kafkaConfiguration,
+            DeserializationFailureHandler<K> keyDeserializationFailureHandler,
+            DeserializationFailureHandler<V> valueDeserializationFailureHandler,
+            RuntimeKafkaSourceConfiguration config,
+            boolean lazyClient,
+            int pollTimeout,
+            boolean failOnDeserializationFailure,
+            java.util.function.Consumer<Consumer<K, V>> onConsumerCreated,
+            BiConsumer<Throwable, Boolean> reportFailure,
+            Context context) {
+        this.configuration = config;
+        this.kafkaConfiguration = kafkaConfiguration;
+
         String keyDeserializerCN = (String) kafkaConfiguration.get(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG);
         String valueDeserializerCN = (String) kafkaConfiguration.get(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG);
+        this.consumerGroup = (String) kafkaConfiguration.get(ConsumerConfig.GROUP_ID_CONFIG);
 
         if (valueDeserializerCN == null) {
             throw ex.missingValueDeserializer(config.getChannel(), config.getChannel());
         }
 
         Deserializer<K> keyDeserializer = new DeserializerWrapper<>(keyDeserializerCN, true,
-                getDeserializationHandler(true, failureHandlers), source, config.getFailOnDeserializationFailure());
+                keyDeserializationFailureHandler, reportFailure, failOnDeserializationFailure);
         Deserializer<V> valueDeserializer = new DeserializerWrapper<>(valueDeserializerCN, false,
-                getDeserializationHandler(false, failureHandlers), source, config.getFailOnDeserializationFailure());
+                valueDeserializationFailureHandler, reportFailure, failOnDeserializationFailure);
 
         // Configure the underlying deserializers
         keyDeserializer.configure(kafkaConfiguration, true);
         valueDeserializer.configure(kafkaConfiguration, false);
 
-        pollTimeout = Duration.ofMillis(config.getPollTimeout());
+        this.pollTimeout = Duration.ofMillis(pollTimeout);
 
         kafkaWorker = Executors.newSingleThreadScheduledExecutor(KafkaPollingThread::new);
 
-        consumer = new KafkaConsumer<>(kafkaConfiguration, keyDeserializer, valueDeserializer);
-        stream = new KafkaRecordStream<>(this, config, source.getContext().getDelegate());
-        batchStream = new KafkaRecordBatchStream<>(this, config, source.getContext().getDelegate());
+        stream = new KafkaRecordStream<>(this, config, context);
+        batchStream = new KafkaRecordBatchStream<>(this, config, context);
+        consumerUni = Uni.createFrom().item(() -> consumerRef.updateAndGet(c -> {
+            if (c != null) {
+                return c;
+            } else {
+                KafkaConsumer<K, V> consumer = new KafkaConsumer<>(kafkaConfiguration, keyDeserializer, valueDeserializer);
+                onConsumerCreated.accept(consumer);
+                closed.set(false);
+                return consumer;
+            }
+        })).memoize().until(closed::get)
+                .runSubscriptionOn(kafkaWorker);
+        if (!lazyClient) {
+            consumerUni.await().indefinitely();
+        }
     }
 
-    public void setRebalanceListener() {
+    public Uni<Consumer<K, V>> withConsumerOnPollingThread() {
+        return consumerUni;
+    }
+
+    public void setRebalanceListener(KafkaConsumerRebalanceListener listener, KafkaCommitHandler commitHandler) {
         try {
-            rebalanceListener = RebalanceListeners.createRebalanceListener(this, configuration, source.getConsumerGroup(),
-                    source.getConsumerRebalanceListeners(), source.getCommitHandler());
+            rebalanceListener = RebalanceListeners.createRebalanceListener(this, consumerGroup,
+                    listener, commitHandler);
         } catch (Exception e) {
             close();
             throw e;
         }
+    }
+
+    public String getConsumerGroup() {
+        return consumerGroup;
     }
 
     // Visible to use for rebalance on MockConsumer which doesn't call listeners
@@ -105,18 +154,15 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
     @Override
     @CheckReturnValue
     public <T> Uni<T> runOnPollingThread(Function<Consumer<K, V>, T> action) {
-        return Uni.createFrom().item(() -> action.apply(consumer))
-                .runSubscriptionOn(kafkaWorker);
+        return withConsumerOnPollingThread().map(action);
     }
 
     @Override
     @CheckReturnValue
     public Uni<Void> runOnPollingThread(java.util.function.Consumer<Consumer<K, V>> action) {
-        return Uni.createFrom().<Void> item(() -> {
-            action.accept(consumer);
-            return null;
-        })
-                .runSubscriptionOn(kafkaWorker);
+        return withConsumerOnPollingThread()
+                .invoke(action)
+                .replaceWithVoid();
     }
 
     Uni<Void> executeWithDelay(Runnable action, Duration delay) {
@@ -161,8 +207,8 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
     public Uni<Set<TopicPartition>> pause() {
         if (paused.compareAndSet(false, true)) {
             return runOnPollingThread(c -> {
-                Set<TopicPartition> tps = consumer.assignment();
-                consumer.pause(tps);
+                Set<TopicPartition> tps = c.assignment();
+                c.pause(tps);
                 return tps;
             });
         } else {
@@ -186,34 +232,30 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
 
     @CheckReturnValue
     public Multi<ConsumerRecord<K, V>> subscribe(Set<String> topics) {
-        return runOnPollingThread(c -> {
+        return stream.onSubscription().call(() -> runOnPollingThread(c -> {
             c.subscribe(topics, rebalanceListener);
-        })
-                .onItem().transformToMulti(v -> stream);
+        }));
     }
 
     @CheckReturnValue
     public Multi<ConsumerRecord<K, V>> subscribe(Pattern topics) {
-        return runOnPollingThread(c -> {
+        return stream.onSubscription().call(() -> runOnPollingThread(c -> {
             c.subscribe(topics, rebalanceListener);
-        })
-                .onItem().transformToMulti(v -> stream);
+        }));
     }
 
     @CheckReturnValue
     Multi<ConsumerRecords<K, V>> subscribeBatch(Set<String> topics) {
-        return runOnPollingThread(c -> {
+        return batchStream.onSubscription().call(() -> runOnPollingThread(c -> {
             c.subscribe(topics, rebalanceListener);
-        })
-                .onItem().transformToMulti(v -> batchStream);
+        }));
     }
 
     @CheckReturnValue
     Multi<ConsumerRecords<K, V>> subscribeBatch(Pattern topics) {
-        return runOnPollingThread(c -> {
+        return batchStream.onSubscription().call(() -> runOnPollingThread(c -> {
             c.subscribe(topics, rebalanceListener);
-        })
-                .onItem().transformToMulti(v -> batchStream);
+        }));
     }
 
     @Override
@@ -222,7 +264,7 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
         if (paused.get()) {
             return runOnPollingThread(c -> {
                 Set<TopicPartition> assignment = c.assignment();
-                consumer.resume(assignment);
+                c.resume(assignment);
             }).invoke(() -> paused.set(false));
         } else {
             return Uni.createFrom().voidItem();
@@ -308,14 +350,8 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
         return map;
     }
 
-    private <T> DeserializationFailureHandler<T> getDeserializationHandler(boolean isKey,
-            Instance<DeserializationFailureHandler<?>> deserializationFailureHandlers) {
-        return createDeserializationFailureHandler(isKey, deserializationFailureHandlers, configuration);
-
-    }
-
     @SuppressWarnings({ "unchecked" })
-    private static <T> DeserializationFailureHandler<T> createDeserializationFailureHandler(boolean isKey,
+    public static <T> DeserializationFailureHandler<T> createDeserializationFailureHandler(boolean isKey,
             Instance<DeserializationFailureHandler<?>> deserializationFailureHandlers,
             KafkaConnectorIncomingConfiguration configuration) {
         String name = isKey ? configuration.getKeyDeserializationFailureHandler().orElse(null)
@@ -353,7 +389,7 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
 
     @Override
     public Consumer<K, V> unwrap() {
-        return consumer;
+        return consumerRef.get();
     }
 
     @Override
@@ -367,16 +403,15 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
     @CheckReturnValue
     @Override
     public Uni<Void> commitAsync(Map<TopicPartition, OffsetAndMetadata> map) {
-        return Uni.createFrom().<Void> emitter(e -> {
-            consumer.commitAsync(map, (offsets, exception) -> {
+        return withConsumerOnPollingThread().chain(c -> Uni.createFrom().emitter(e -> {
+            c.commitAsync(map, (offsets, exception) -> {
                 if (exception != null) {
                     e.fail(exception);
                 } else {
                     e.complete(null);
                 }
             });
-        })
-                .runSubscriptionOn(kafkaWorker);
+        }));
     }
 
     @Override
@@ -385,8 +420,7 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
     }
 
     public void close() {
-        int timeout = configuration.config()
-                .getOptionalValue(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, Integer.class).orElse(1000);
+        int timeout = configuration.getCloseTimeout();
         if (closed.compareAndSet(false, true)) {
             Uni<Void> uni = runOnPollingThread(c -> {
                 if (System.getSecurityManager() == null) {
@@ -400,7 +434,10 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
             }).onItem().invoke(kafkaWorker::shutdown);
 
             // Interrupt polling
-            consumer.wakeup();
+            Consumer<K, V> consumer = consumerRef.get();
+            if (consumer != null) {
+                consumer.wakeup();
+            }
             if (Context.isOnEventLoopThread()) {
                 // We can't block, just forget the result
                 uni.subscribeAsCompletionStage();
@@ -412,9 +449,16 @@ public class ReactiveKafkaConsumer<K, V> implements io.smallrye.reactive.messagi
 
     @SuppressWarnings("unchecked")
     public void injectClient(MockConsumer<?, ?> consumer) {
-        Consumer<K, V> cons = this.consumer;
-        this.consumer = (Consumer<K, V>) consumer;
-        cons.close();
+        this.consumerRef.getAndUpdate(previous -> {
+            if (previous != null) {
+                previous.close();
+            }
+            closed.set(true);
+            return (Consumer<K, V>) consumer;
+        });
+        // force uni to re-memoize
+        this.consumerUni.await().indefinitely();
+        closed.set(false);
     }
 
     @Override

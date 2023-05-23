@@ -9,8 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import javax.enterprise.inject.AmbiguousResolutionException;
-import javax.enterprise.inject.UnsatisfiedResolutionException;
+import jakarta.enterprise.inject.AmbiguousResolutionException;
+import jakarta.enterprise.inject.UnsatisfiedResolutionException;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.KafkaException;
@@ -19,13 +19,10 @@ import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.smallrye.reactive.messaging.kafka.CountKafkaCdiEvents;
 import io.smallrye.reactive.messaging.kafka.DeserializationFailureHandler;
-import io.smallrye.reactive.messaging.kafka.KafkaConnector;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
 import io.smallrye.reactive.messaging.kafka.KafkaRecord;
 import io.smallrye.reactive.messaging.kafka.base.DoubleInstance;
@@ -41,11 +38,6 @@ import io.vertx.core.json.JsonObject;
 public class KeyDeserializerConfigurationTest extends KafkaCompanionTestBase {
 
     private KafkaSource<String, String> source;
-
-    @BeforeAll
-    static void initTracer() {
-        KafkaConnector.TRACER = GlobalOpenTelemetry.getTracerProvider().get("io.smallrye.reactive.messaging.kafka");
-    }
 
     @AfterEach
     public void cleanup() {
@@ -232,10 +224,10 @@ public class KeyDeserializerConfigurationTest extends KafkaCompanionTestBase {
                                         .isEqualTo(exception.getMessage());
                                 assertThat(
                                         headers.lastHeader(DeserializationFailureHandler.DESERIALIZATION_FAILURE_DATA).value())
-                                                .isEqualTo(data);
+                                        .isEqualTo(data);
                                 assertThat(
                                         getHeader(headers, DeserializationFailureHandler.DESERIALIZATION_FAILURE_DESERIALIZER))
-                                                .isEqualTo(deserializer);
+                                        .isEqualTo(deserializer);
 
                                 return fallback;
                             }
@@ -392,9 +384,9 @@ public class KeyDeserializerConfigurationTest extends KafkaCompanionTestBase {
                 new KafkaConnectorIncomingConfiguration(config), commitHandlerFactories, failureHandlerFactories,
                 UnsatisfiedInstance.instance(),
                 CountKafkaCdiEvents.noCdiEvents, UnsatisfiedInstance.instance(), -1))
-                        .isInstanceOf(KafkaException.class)
-                        .hasCauseInstanceOf(IllegalArgumentException.class)
-                        .hasStackTraceContaining("boom");
+                .isInstanceOf(KafkaException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class)
+                .hasStackTraceContaining("boom");
 
     }
 

@@ -4,8 +4,8 @@ import java.lang.annotation.Annotation;
 import java.util.Collections;
 import java.util.Iterator;
 
-import javax.enterprise.inject.Instance;
-import javax.enterprise.util.TypeLiteral;
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.util.TypeLiteral;
 
 import io.smallrye.common.annotation.Identifier;
 
@@ -57,6 +57,16 @@ public class SingletonInstance<T> implements Instance<T> {
     @Override
     public void destroy(T instance) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Handle<T> getHandle() {
+        return null;
+    }
+
+    @Override
+    public Iterable<? extends Handle<T>> handles() {
+        return null;
     }
 
     @Override

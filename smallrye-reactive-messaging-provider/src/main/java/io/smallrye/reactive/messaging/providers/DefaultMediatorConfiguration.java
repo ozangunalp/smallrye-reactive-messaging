@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-import javax.enterprise.inject.spi.Bean;
+import jakarta.enterprise.inject.spi.Bean;
 
 import org.eclipse.microprofile.reactive.messaging.Acknowledgment;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
@@ -62,6 +62,8 @@ public class DefaultMediatorConfiguration implements MediatorConfiguration {
      * Use MicroProfile Stream Stream Ops Type.
      */
     private boolean useBuilderTypes = false;
+
+    private boolean useReactiveStreams = false;
 
     /**
      * The merge policy.
@@ -141,9 +143,8 @@ public class DefaultMediatorConfiguration implements MediatorConfiguration {
                 this.acknowledgment);
         this.production = validationOutput.getProduction();
         this.consumption = validationOutput.getConsumption();
-        if (validationOutput.getUseBuilderTypes()) {
-            this.useBuilderTypes = validationOutput.getUseBuilderTypes();
-        }
+        this.useBuilderTypes = validationOutput.getUseBuilderTypes();
+        this.useReactiveStreams = validationOutput.getUseReactiveStreams();
         if (this.acknowledgment == null) {
             this.acknowledgment = this.mediatorConfigurationSupport.processDefaultAcknowledgement(this.shape, this.consumption,
                     this.production);
@@ -217,6 +218,11 @@ public class DefaultMediatorConfiguration implements MediatorConfiguration {
     @Override
     public boolean usesBuilderTypes() {
         return useBuilderTypes;
+    }
+
+    @Override
+    public boolean usesReactiveStreams() {
+        return useReactiveStreams;
     }
 
     @Override

@@ -1,5 +1,7 @@
 package io.smallrye.reactive.messaging.mqtt;
 
+import static io.smallrye.reactive.messaging.mqtt.i18n.MqttLogging.log;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -34,6 +36,7 @@ public class Clients {
                 + "<" + (server == null ? "" : server)
                 + ">-[" + (clientId != null ? clientId : "") + "]";
         return clients.computeIfAbsent(id, key -> {
+            log.infof("Create MQTT Client for %s.", id);
             MqttClientSession client = MqttClientSession.create(vertx.getDelegate(), options);
             return new ClientHolder(client);
         });
@@ -56,7 +59,6 @@ public class Clients {
             this.client = client;
             messages = BroadcastProcessor.create();
             client.messageHandler(m -> messages.onNext(MqttPublishMessage.newInstance(m)));
-            client.exceptionHandler(messages::onError);
         }
 
         public Future<Void> start() {

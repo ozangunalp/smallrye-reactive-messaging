@@ -5,41 +5,40 @@ import static io.smallrye.reactive.messaging.kafka.i18n.KafkaLogging.log;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Flow;
+import java.util.concurrent.Flow.Publisher;
 import java.util.stream.Collectors;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.Priority;
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.context.BeforeDestroyed;
-import javax.enterprise.event.Observes;
-import javax.enterprise.event.Reception;
-import javax.enterprise.inject.Any;
-import javax.enterprise.inject.Instance;
-import javax.inject.Inject;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Priority;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.BeforeDestroyed;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.event.Reception;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
 
+import org.apache.kafka.clients.producer.ProducerInterceptor;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.spi.Connector;
-import org.eclipse.microprofile.reactive.messaging.spi.IncomingConnectorFactory;
-import org.eclipse.microprofile.reactive.messaging.spi.OutgoingConnectorFactory;
-import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
-import org.eclipse.microprofile.reactive.streams.operators.ReactiveStreams;
-import org.eclipse.microprofile.reactive.streams.operators.SubscriberBuilder;
-import org.reactivestreams.Publisher;
 
-import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.Tracer;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.reactive.messaging.annotations.ConnectorAttribute;
 import io.smallrye.reactive.messaging.annotations.ConnectorAttribute.Direction;
+import io.smallrye.reactive.messaging.connector.InboundConnector;
+import io.smallrye.reactive.messaging.connector.OutboundConnector;
 import io.smallrye.reactive.messaging.health.HealthReport;
 import io.smallrye.reactive.messaging.health.HealthReporter;
 import io.smallrye.reactive.messaging.kafka.commit.KafkaCommitHandler;
-import io.smallrye.reactive.messaging.kafka.commit.KafkaThrottledLatestProcessedCommit;
 import io.smallrye.reactive.messaging.kafka.fault.KafkaFailureHandler;
 import io.smallrye.reactive.messaging.kafka.impl.ConfigHelper;
 import io.smallrye.reactive.messaging.kafka.impl.KafkaSink;
 import io.smallrye.reactive.messaging.kafka.impl.KafkaSource;
+import io.smallrye.reactive.messaging.kafka.impl.TopicPartitions;
 import io.smallrye.reactive.messaging.providers.connectors.ExecutionHolder;
 import io.vertx.mutiny.core.Vertx;
 
@@ -58,6 +57,7 @@ import io.vertx.mutiny.core.Vertx;
 @ConnectorAttribute(name = "cloud-events", type = "boolean", direction = Direction.INCOMING_AND_OUTGOING, description = "Enables (default) or disables the Cloud Event support. If enabled on an _incoming_ channel, the connector analyzes the incoming records and try to create Cloud Event metadata. If enabled on an _outgoing_, the connector sends the outgoing messages as Cloud Event if the message includes Cloud Event Metadata.", defaultValue = "true")
 @ConnectorAttribute(name = "kafka-configuration", type = "string", direction = Direction.INCOMING_AND_OUTGOING, description = "Identifier of a CDI bean that provides the default Kafka consumer/producer configuration for this channel. The channel configuration can still override any attribute. The bean must have a type of Map<String, Object> and must use the @io.smallrye.common.annotation.Identifier qualifier to set the identifier.")
 @ConnectorAttribute(name = "client-id-prefix", type = "string", direction = Direction.INCOMING_AND_OUTGOING, description = "Prefix for Kafka client `client.id` attribute. If defined configured or generated `client.id` will be prefixed with the given value.")
+@ConnectorAttribute(name = "lazy-client", type = "boolean", direction = Direction.INCOMING_AND_OUTGOING, description = "Whether Kafka client is created lazily or eagerly.", defaultValue = "false")
 
 @ConnectorAttribute(name = "topics", type = "string", direction = Direction.INCOMING, description = "A comma-separating list of topics to be consumed. Cannot be used with the `topic` or `pattern` properties")
 @ConnectorAttribute(name = "pattern", type = "boolean", direction = Direction.INCOMING, description = "Indicate that the `topic` property is a regular expression. Must be used with the `topic` property. Cannot be used with the `topics` property", defaultValue = "false")
@@ -74,10 +74,16 @@ import io.vertx.mutiny.core.Vertx;
 @ConnectorAttribute(name = "failure-strategy", type = "string", direction = Direction.INCOMING, description = "Specify the failure strategy to apply when a message produced from a record is acknowledged negatively (nack). Values can be `fail` (default), `ignore`, or `dead-letter-queue`", defaultValue = "fail")
 @ConnectorAttribute(name = "commit-strategy", type = "string", direction = Direction.INCOMING, description = "Specify the commit strategy to apply when a message produced from a record is acknowledged. Values can be `latest`, `ignore` or `throttled`. If `enable.auto.commit` is true then the default is `ignore` otherwise it is `throttled`")
 @ConnectorAttribute(name = "throttled.unprocessed-record-max-age.ms", type = "int", direction = Direction.INCOMING, description = "While using the `throttled` commit-strategy, specify the max age in milliseconds that an unprocessed message can be before the connector is marked as unhealthy. Setting this attribute to 0 disables this monitoring.", defaultValue = "60000")
+@ConnectorAttribute(name = "checkpoint.state-store", type = "string", direction = Direction.INCOMING, description = "While using the `checkpoint` commit-strategy, the name set in `@Identifier` of a bean that implements `io.smallrye.reactive.messaging.kafka.StateStore.Factory` to specify the state store implementation.")
+@ConnectorAttribute(name = "checkpoint.state-type", type = "string", direction = Direction.INCOMING, description = "While using the `checkpoint` commit-strategy, the fully qualified type name of the state object to persist in the state store. When provided, it can be used by the state store implementation to help persisting the processing state object.")
+@ConnectorAttribute(name = "checkpoint.unsynced-state-max-age.ms", type = "int", direction = Direction.INCOMING, description = "While using the `checkpoint` commit-strategy, specify the max age in milliseconds that the processing state must be persisted before the connector is marked as unhealthy. Setting this attribute to 0 disables this monitoring.", defaultValue = "10000")
 @ConnectorAttribute(name = "dead-letter-queue.topic", type = "string", direction = Direction.INCOMING, description = "When the `failure-strategy` is set to `dead-letter-queue` indicates on which topic the record is sent. Defaults is `dead-letter-topic-$channel`")
 @ConnectorAttribute(name = "dead-letter-queue.producer-client-id", type = "string", direction = Direction.INCOMING, description = "When the `failure-strategy` is set to `dead-letter-queue` indicates what client id the generated producer should use. Defaults is `kafka-dead-letter-topic-producer-$client-id`")
 @ConnectorAttribute(name = "dead-letter-queue.key.serializer", type = "string", direction = Direction.INCOMING, description = "When the `failure-strategy` is set to `dead-letter-queue` indicates the key serializer to use. If not set the serializer associated to the key deserializer is used")
 @ConnectorAttribute(name = "dead-letter-queue.value.serializer", type = "string", direction = Direction.INCOMING, description = "When the `failure-strategy` is set to `dead-letter-queue` indicates the value serializer to use. If not set the serializer associated to the value deserializer is used")
+@ConnectorAttribute(name = "delayed-retry-topic.topics", type = "string", direction = Direction.INCOMING, description = "When the `failure-strategy` is set to `delayed-retry-topic` indicates topics to use. If not set the source channel name is used, with 10, 20 and 50 seconds delayed topics.")
+@ConnectorAttribute(name = "delayed-retry-topic.max-retries", type = "int", direction = Direction.INCOMING, description = "When the `failure-strategy` is set to `delayed-retry-topic` indicates the maximum number of retries. If higher than the number of delayed retry topics, last topic is used.")
+@ConnectorAttribute(name = "delayed-retry-topic.timeout", type = "int", direction = Direction.INCOMING, description = "When the `failure-strategy` is set to `delayed-retry-topic` indicates the global timeout per record.", defaultValue = "120000")
 @ConnectorAttribute(name = "partitions", type = "int", direction = Direction.INCOMING, description = "The number of partitions to be consumed concurrently. The connector creates the specified amount of Kafka consumers. It should match the number of partition of the targeted topic", defaultValue = "1")
 @ConnectorAttribute(name = "requests", type = "int", direction = Direction.INCOMING, description = "When `partitions` is greater than 1, this attribute allows configuring how many records are requested by each consumers every time.", defaultValue = "128")
 @ConnectorAttribute(name = "consumer-rebalance-listener.name", type = "string", direction = Direction.INCOMING, description = "The name set in `@Identifier` of a bean that implements `io.smallrye.reactive.messaging.kafka.KafkaConsumerRebalanceListener`. If set, this rebalance listener is applied to the consumer.")
@@ -112,11 +118,18 @@ import io.vertx.mutiny.core.Vertx;
 @ConnectorAttribute(name = "propagate-headers", direction = Direction.OUTGOING, description = "A comma-separating list of incoming record headers to be propagated to the outgoing record", type = "string", defaultValue = "")
 @ConnectorAttribute(name = "key-serialization-failure-handler", type = "string", direction = Direction.OUTGOING, description = "The name set in `@Identifier` of a bean that implements `io.smallrye.reactive.messaging.kafka.SerializationFailureHandler`. If set, serialization failure happening when serializing keys are delegated to this handler which may provide a fallback value.")
 @ConnectorAttribute(name = "value-serialization-failure-handler", type = "string", direction = Direction.OUTGOING, description = "The name set in `@Identifier` of a bean that implements `io.smallrye.reactive.messaging.kafka.SerializationFailureHandler`. If set, serialization failure happening when serializing values are delegated to this handler which may provide a fallback value.")
-public class KafkaConnector implements IncomingConnectorFactory, OutgoingConnectorFactory, HealthReporter {
+@ConnectorAttribute(name = "interceptor-bean", type = "string", direction = Direction.OUTGOING, description = "The name set in `@Identifier` of a bean that implements `org.apache.kafka.clients.producer.ProducerInterceptor`. If set, the identified bean will be used as the producer interceptor.")
+public class KafkaConnector implements InboundConnector, OutboundConnector, HealthReporter {
 
     public static final String CONNECTOR_NAME = "smallrye-kafka";
 
-    public static Tracer TRACER;
+    @Deprecated
+    public static Tracer TRACER = new Tracer() {
+        @Override
+        public SpanBuilder spanBuilder(final String spanName) {
+            throw new UnsupportedOperationException();
+        }
+    };
 
     @Inject
     ExecutionHolder executionHolder;
@@ -124,6 +137,10 @@ public class KafkaConnector implements IncomingConnectorFactory, OutgoingConnect
     @Inject
     @Any
     Instance<KafkaConsumerRebalanceListener> consumerRebalanceListeners;
+
+    @Inject
+    @Any
+    Instance<ProducerInterceptor<?, ?>> producerInterceptors;
 
     @Inject
     @Any
@@ -157,17 +174,16 @@ public class KafkaConnector implements IncomingConnectorFactory, OutgoingConnect
             @Observes(notifyObserver = Reception.IF_EXISTS) @Priority(50) @BeforeDestroyed(ApplicationScoped.class) Object event) {
         sources.forEach(KafkaSource::closeQuietly);
         sinks.forEach(KafkaSink::closeQuietly);
-        KafkaThrottledLatestProcessedCommit.clearCache();
+        TopicPartitions.clearCache();
     }
 
     @PostConstruct
     void init() {
         this.vertx = executionHolder.vertx();
-        TRACER = GlobalOpenTelemetry.getTracerProvider().get("io.smallrye.reactive.messaging.kafka");
     }
 
     @Override
-    public PublisherBuilder<? extends Message<?>> getPublisherBuilder(Config config) {
+    public Flow.Publisher<? extends Message<?>> getPublisher(Config config) {
         Config channelConfiguration = ConfigHelper.retrieveChannelConfiguration(configurations, config);
 
         KafkaConnectorIncomingConfiguration ic = new KafkaConnectorIncomingConfiguration(channelConfiguration);
@@ -203,9 +219,9 @@ public class KafkaConnector implements IncomingConnectorFactory, OutgoingConnect
                 stream = source.getBatchStream();
             }
             if (broadcast) {
-                return ReactiveStreams.fromPublisher(stream.broadcast().toAllSubscribers());
+                return stream.broadcast().toAllSubscribers();
             } else {
-                return ReactiveStreams.fromPublisher(stream);
+                return stream;
             }
         }
 
@@ -231,14 +247,14 @@ public class KafkaConnector implements IncomingConnectorFactory, OutgoingConnect
                 .streams(streams.toArray(new Publisher[0]));
         boolean broadcast = ic.getBroadcast();
         if (broadcast) {
-            return ReactiveStreams.fromPublisher(multi.broadcast().toAllSubscribers());
+            return multi.broadcast().toAllSubscribers();
         } else {
-            return ReactiveStreams.fromPublisher(multi);
+            return multi;
         }
     }
 
     @Override
-    public SubscriberBuilder<? extends Message<?>, Void> getSubscriberBuilder(Config config) {
+    public Flow.Subscriber<? extends Message<?>> getSubscriber(Config config) {
         Config channelConfiguration = ConfigHelper.retrieveChannelConfiguration(configurations, config);
 
         KafkaConnectorOutgoingConfiguration oc = new KafkaConnectorOutgoingConfiguration(channelConfiguration);
@@ -249,7 +265,7 @@ public class KafkaConnector implements IncomingConnectorFactory, OutgoingConnect
         if (oc.getHealthReadinessTimeout().isPresent()) {
             log.deprecatedConfig("health-readiness-timeout", "health-topic-verification-timeout");
         }
-        KafkaSink sink = new KafkaSink(oc, kafkaCDIEvents, serializationFailureHandlers);
+        KafkaSink sink = new KafkaSink(oc, kafkaCDIEvents, serializationFailureHandlers, producerInterceptors);
         sinks.add(sink);
         return sink.getSink();
     }

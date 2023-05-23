@@ -1,6 +1,7 @@
 package io.smallrye.reactive.messaging.kafka;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -11,8 +12,8 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.inject.Inject;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -60,6 +61,8 @@ public class MissingBackPressureTest extends KafkaCompanionTestBase {
 
         bean.stop();
         assertThat(consume.count()).isGreaterThanOrEqualTo(10);
+
+        await().untilAsserted(() -> assertThat(bean.emitted()).hasSizeGreaterThanOrEqualTo(10));
 
         // Check that the 10 first value matches the emitted values.
         List<KafkaRecord<String, String>> messages = bean.emitted();

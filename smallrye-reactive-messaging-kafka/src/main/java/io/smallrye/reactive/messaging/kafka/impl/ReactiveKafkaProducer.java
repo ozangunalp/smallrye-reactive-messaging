@@ -12,20 +12,24 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-import javax.enterprise.inject.Instance;
+import jakarta.enterprise.inject.Instance;
 
 import org.apache.kafka.clients.consumer.ConsumerGroupMetadata;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerInterceptor;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.serialization.Serializer;
 
 import io.smallrye.common.annotation.CheckReturnValue;
@@ -34,14 +38,16 @@ import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.kafka.KafkaConnectorOutgoingConfiguration;
 import io.smallrye.reactive.messaging.kafka.SerializationFailureHandler;
 import io.smallrye.reactive.messaging.kafka.fault.SerializerWrapper;
+import io.smallrye.reactive.messaging.providers.helpers.CDIUtils;
 import io.vertx.core.Context;
 
 public class ReactiveKafkaProducer<K, V> implements io.smallrye.reactive.messaging.kafka.KafkaProducer<K, V> {
 
-    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean closed = new AtomicBoolean(true);
     private final String clientId;
-
-    private final Producer<K, V> producer;
+    private final ProducerInterceptor<K, V> interceptor;
+    private final Uni<Producer<K, V>> producerUni;
+    private final AtomicReference<Producer<K, V>> producerRef = new AtomicReference<>();
 
     private final ExecutorService kafkaWorker;
 
@@ -53,14 +59,19 @@ public class ReactiveKafkaProducer<K, V> implements io.smallrye.reactive.messagi
 
     public ReactiveKafkaProducer(KafkaConnectorOutgoingConfiguration config,
             Instance<SerializationFailureHandler<?>> serializationFailureHandlers,
-            Consumer<Throwable> reportFailure) {
+            Instance<ProducerInterceptor<?, ?>> producerInterceptors,
+            Consumer<Throwable> reportFailure,
+            BiConsumer<Producer<?, ?>, Map<String, Object>> onProducerCreated) {
         this(getKafkaProducerConfiguration(config), config.getChannel(), config.getCloseTimeout(),
+                config.getLazyClient(),
+                getProducerInterceptorBean(config, producerInterceptors),
                 createSerializationFailureHandler(config.getChannel(),
                         config.getKeySerializationFailureHandler().orElse(null),
                         serializationFailureHandlers),
                 createSerializationFailureHandler(config.getChannel(),
                         config.getValueSerializationFailureHandler().orElse(null),
-                        serializationFailureHandlers));
+                        serializationFailureHandlers),
+                onProducerCreated);
         this.reportFailure = reportFailure;
     }
 
@@ -69,12 +80,16 @@ public class ReactiveKafkaProducer<K, V> implements io.smallrye.reactive.messagi
     }
 
     public ReactiveKafkaProducer(Map<String, Object> kafkaConfiguration, String channel, int closeTimeout,
+            boolean lazyClient,
+            ProducerInterceptor<K, V> interceptor,
             SerializationFailureHandler<K> keySerializationFailureHandler,
-            SerializationFailureHandler<V> valueSerializationFailureHandler) {
+            SerializationFailureHandler<V> valueSerializationFailureHandler,
+            BiConsumer<Producer<?, ?>, Map<String, Object>> onProducerCreated) {
         this.kafkaConfiguration = kafkaConfiguration;
         this.channel = channel;
         this.closetimeout = closeTimeout;
         this.clientId = kafkaConfiguration.get(ProducerConfig.CLIENT_ID_CONFIG).toString();
+        this.interceptor = interceptor;
 
         String keySerializerCN = (String) kafkaConfiguration.get(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG);
         String valueSerializerCN = (String) kafkaConfiguration.get(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG);
@@ -91,51 +106,75 @@ public class ReactiveKafkaProducer<K, V> implements io.smallrye.reactive.messagi
         // Configure the underlying serializers
         keySerializer.configure(kafkaConfiguration, true);
         valueSerializer.configure(kafkaConfiguration, false);
+        // Configure interceptor
+        if (interceptor != null) {
+            interceptor.configure(kafkaConfiguration);
+        }
 
         kafkaWorker = Executors.newSingleThreadExecutor(KafkaSendingThread::new);
-        producer = new KafkaProducer<>(kafkaConfiguration, keySerializer, valueSerializer);
-        if (kafkaConfiguration.containsKey(ProducerConfig.TRANSACTIONAL_ID_CONFIG)) {
-            initTransactions().subscribe().with(unused -> {
-            }, throwable -> {
-                log.unableToInitializeProducer(channel, throwable);
-                if (reportFailure != null) {
-                    reportFailure.accept(throwable);
+        producerUni = Uni.createFrom().item(() -> producerRef.updateAndGet(p -> {
+            if (p != null) {
+                return p;
+            } else {
+                Producer<K, V> producer = new KafkaProducer<>(kafkaConfiguration, keySerializer, valueSerializer);
+                if (kafkaConfiguration.containsKey(ProducerConfig.TRANSACTIONAL_ID_CONFIG)) {
+                    producer.initTransactions();
                 }
-            });
+                onProducerCreated.accept(producer, kafkaConfiguration);
+                closed.set(false);
+                return producer;
+            }
+        })).onFailure().invoke(throwable -> {
+            log.unableToInitializeProducer(channel, throwable);
+            if (reportFailure != null) {
+                reportFailure.accept(throwable);
+            }
+        }).memoize().until(closed::get)
+                .runSubscriptionOn(kafkaWorker);
+        if (!lazyClient) {
+            producerUni.await().indefinitely();
         }
+    }
+
+    private Uni<Producer<K, V>> withProducerOnSendingThread() {
+        return producerUni;
     }
 
     @Override
     @CheckReturnValue
     public <T> Uni<T> runOnSendingThread(Function<Producer<K, V>, T> action) {
-        return Uni.createFrom().item(() -> action.apply(producer))
-                .runSubscriptionOn(kafkaWorker);
+        return withProducerOnSendingThread()
+                .map(action);
     }
 
     @Override
     @CheckReturnValue
     public Uni<Void> runOnSendingThread(java.util.function.Consumer<Producer<K, V>> action) {
-        return Uni.createFrom().<Void> item(() -> {
-            action.accept(producer);
-            return null;
-        }).runSubscriptionOn(kafkaWorker);
+        return withProducerOnSendingThread()
+                .invoke(action)
+                .replaceWithVoid();
     }
 
     @Override
     @CheckReturnValue
     public Uni<RecordMetadata> send(ProducerRecord<K, V> record) {
-        return Uni.createFrom().<RecordMetadata> emitter(em -> producer.send(record, (metadata, exception) -> {
-            if (exception != null) {
-                if (record.topic() != null) {
-                    log.unableToWrite(this.channel, record.topic(), exception);
-                } else {
-                    log.unableToWrite(this.channel, exception);
-                }
-                em.fail(exception);
-            } else {
-                em.complete(metadata);
-            }
-        })).runSubscriptionOn(kafkaWorker);
+        return withProducerOnSendingThread()
+                .chain(c -> {
+                    final ProducerRecord<K, V> intercepted = interceptOnSend(record);
+                    return Uni.createFrom().emitter(em -> c.send(intercepted, (metadata, exception) -> {
+                        interceptOnAcknowledge(intercepted, metadata, exception);
+                        if (exception != null) {
+                            if (record.topic() != null) {
+                                log.unableToWrite(this.channel, record.topic(), exception);
+                            } else {
+                                log.unableToWrite(this.channel, exception);
+                            }
+                            em.fail(exception);
+                        } else {
+                            em.complete(metadata);
+                        }
+                    }));
+                });
     }
 
     @Override
@@ -184,6 +223,14 @@ public class ReactiveKafkaProducer<K, V> implements io.smallrye.reactive.messagi
         return runOnSendingThread(producer -> {
             producer.sendOffsetsToTransaction(offsets, groupMetadata);
         });
+    }
+
+    @SuppressWarnings({ "unchecked" })
+    private static <K, V> ProducerInterceptor<K, V> getProducerInterceptorBean(KafkaConnectorOutgoingConfiguration config,
+            Instance<ProducerInterceptor<?, ?>> producerInterceptors) {
+        return (ProducerInterceptor<K, V>) config.getInterceptorBean()
+                .flatMap(identifier -> CDIUtils.getInstanceById(producerInterceptors, identifier).stream().findFirst())
+                .orElse(null);
     }
 
     @SuppressWarnings({ "unchecked" })
@@ -254,7 +301,7 @@ public class ReactiveKafkaProducer<K, V> implements io.smallrye.reactive.messagi
 
     @Override
     public Producer<K, V> unwrap() {
-        return producer;
+        return producerRef.get();
     }
 
     @Override
@@ -267,6 +314,7 @@ public class ReactiveKafkaProducer<K, V> implements io.smallrye.reactive.messagi
         if (closed.compareAndSet(false, true)) {
             int timeout = this.closetimeout;
             Uni<Void> uni = runOnSendingThread(p -> {
+                interceptClose();
                 if (System.getSecurityManager() == null) {
                     p.close(Duration.ofMillis(timeout));
                 } else {
@@ -282,6 +330,43 @@ public class ReactiveKafkaProducer<K, V> implements io.smallrye.reactive.messagi
                 uni.subscribeAsCompletionStage();
             } else {
                 uni.await().atMost(Duration.ofMillis(timeout * 2L));
+            }
+        }
+    }
+
+    private ProducerRecord<K, V> interceptOnSend(ProducerRecord<K, V> record) {
+        if (interceptor != null) {
+            try {
+                return interceptor.onSend(record);
+            } catch (Throwable t) {
+                log.interceptorOnSendError(channel, t);
+            }
+        }
+        return record;
+    }
+
+    private void interceptOnAcknowledge(ProducerRecord<K, V> intercepted, RecordMetadata recordMetadata, Exception exception) {
+        if (interceptor != null) {
+            try {
+                RecordMetadata metadata = exception == null ? recordMetadata : getRecordMetadataForFailure(intercepted);
+                interceptor.onAcknowledgement(metadata, exception);
+            } catch (Throwable t) {
+                log.interceptorOnAcknowledgeError(this.channel, t);
+            }
+        }
+    }
+
+    private static RecordMetadata getRecordMetadataForFailure(ProducerRecord<?, ?> record) {
+        return new RecordMetadata(new TopicPartition(record.topic(), record.partition()),
+                -1, -1, RecordBatch.NO_TIMESTAMP, -1, -1);
+    }
+
+    private void interceptClose() {
+        if (interceptor != null) {
+            try {
+                interceptor.close();
+            } catch (Throwable t) {
+                log.interceptorCloseError(channel, t);
             }
         }
     }

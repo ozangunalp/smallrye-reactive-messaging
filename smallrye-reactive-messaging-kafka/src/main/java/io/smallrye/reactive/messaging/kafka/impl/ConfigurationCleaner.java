@@ -18,7 +18,12 @@ public class ConfigurationCleaner {
             "health-topic-verification-timeout",
 
             "tracing-enabled",
-            "cloud-events");
+            "cloud-events",
+            "client-id-prefix",
+            "lazy-client",
+            "delayed-retry-topic.topics",
+            "delayed-retry-topic.max-retries",
+            "delayed-retry-topic.timeout");
 
     private static final List<String> PRODUCER = Arrays.asList(
             "key",
@@ -37,6 +42,7 @@ public class ConfigurationCleaner {
             "key-serialization-failure-handler",
             "value-serialization-failure-handler",
             "merge",
+            "interceptor-bean",
 
             // Remove most common attributes, may have been configured from the default config
             "key.deserializer",
@@ -73,6 +79,8 @@ public class ConfigurationCleaner {
             "key.serializer",
             "value.serializer");
 
+    private static final List<String> CONSUMER_PREFIX = Arrays.asList("checkpoint");
+
     private ConfigurationCleaner() {
         // Avoid direct instantiation
     }
@@ -92,6 +100,9 @@ public class ConfigurationCleaner {
         }
         for (String key : CONSUMER) {
             conf.remove(key);
+        }
+        for (String prefix : CONSUMER_PREFIX) {
+            conf.keySet().removeIf(key -> key.startsWith(prefix));
         }
     }
 

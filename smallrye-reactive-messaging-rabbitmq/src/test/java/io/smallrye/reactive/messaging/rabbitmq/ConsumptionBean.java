@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import org.eclipse.microprofile.reactive.messaging.Acknowledgment;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
@@ -25,7 +25,7 @@ public class ConsumptionBean {
     @Incoming("data")
     @Outgoing("sink")
     @Acknowledgment(Acknowledgment.Strategy.MANUAL)
-    public Message<Integer> process(IncomingRabbitMQMessage<String> input) {
+    public Message<Integer> process(Message<String> input) {
         int value = -1;
         try {
             value = Integer.parseInt(input.getPayload());

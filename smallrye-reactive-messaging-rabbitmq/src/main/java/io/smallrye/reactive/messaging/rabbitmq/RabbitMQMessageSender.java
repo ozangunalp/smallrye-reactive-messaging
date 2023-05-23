@@ -3,22 +3,30 @@ package io.smallrye.reactive.messaging.rabbitmq;
 import static io.smallrye.reactive.messaging.rabbitmq.i18n.RabbitMQExceptions.ex;
 import static java.time.Duration.ofSeconds;
 
-import java.util.Arrays;
 import java.util.Optional;
+import java.util.concurrent.Flow;
+import java.util.concurrent.Flow.Processor;
+import java.util.concurrent.Flow.Subscriber;
+import java.util.concurrent.Flow.Subscription;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 
 import org.eclipse.microprofile.reactive.messaging.Message;
-import org.reactivestreams.Processor;
-import org.reactivestreams.Publisher;
-import org.reactivestreams.Subscriber;
-import org.reactivestreams.Subscription;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.instrumentation.api.instrumenter.Instrumenter;
+import io.opentelemetry.instrumentation.api.instrumenter.InstrumenterBuilder;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessageOperation;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingAttributesExtractor;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingAttributesGetter;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingSpanNameExtractor;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.helpers.Subscriptions;
 import io.smallrye.mutiny.tuples.Tuple2;
 import io.smallrye.reactive.messaging.rabbitmq.i18n.RabbitMQExceptions;
 import io.smallrye.reactive.messaging.rabbitmq.i18n.RabbitMQLogging;
+import io.smallrye.reactive.messaging.rabbitmq.tracing.RabbitMQTrace;
+import io.smallrye.reactive.messaging.rabbitmq.tracing.RabbitMQTraceAttributesExtractor;
+import io.smallrye.reactive.messaging.rabbitmq.tracing.RabbitMQTraceTextMapSetter;
 import io.vertx.mutiny.rabbitmq.RabbitMQPublisher;
 
 /**
@@ -38,6 +46,8 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
     private final long inflights;
     private final Optional<Long> defaultTtl;
 
+    private final Instrumenter<RabbitMQTrace, Void> instrumenter;
+
     /**
      * Constructor.
      *
@@ -49,7 +59,7 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
             final Uni<RabbitMQPublisher> retrieveSender) {
         this.retrieveSender = retrieveSender;
         this.configuration = oc;
-        this.configuredExchange = oc.getExchangeName().orElseGet(oc::getChannel);
+        this.configuredExchange = RabbitMQConnector.getExchangeName(oc);
         this.isTracingEnabled = oc.getTracingEnabled();
         this.inflights = oc.getMaxInflightMessages();
         this.defaultTtl = oc.getDefaultTtl();
@@ -61,6 +71,17 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
         if (defaultTtl.isPresent() && defaultTtl.get() < 0) {
             throw ex.illegalArgumentInvalidDefaultTtl();
         }
+
+        RabbitMQTraceAttributesExtractor rabbitMQAttributesExtractor = new RabbitMQTraceAttributesExtractor();
+        MessagingAttributesGetter<RabbitMQTrace, Void> messagingAttributesGetter = rabbitMQAttributesExtractor
+                .getMessagingAttributesGetter();
+        InstrumenterBuilder<RabbitMQTrace, Void> builder = Instrumenter.builder(GlobalOpenTelemetry.get(),
+                "io.smallrye.reactive.messaging",
+                MessagingSpanNameExtractor.create(messagingAttributesGetter, MessageOperation.SEND));
+
+        instrumenter = builder.addAttributesExtractor(rabbitMQAttributesExtractor)
+                .addAttributesExtractor(MessagingAttributesExtractor.create(messagingAttributesGetter, MessageOperation.SEND))
+                .buildProducerInstrumenter(RabbitMQTraceTextMapSetter.INSTANCE);
     }
 
     /* ----------------------------------------------------- */
@@ -68,18 +89,18 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
     /* ----------------------------------------------------- */
 
     /**
-     * Request {@link Publisher} to start streaming data.
+     * Request {@link Flow.Publisher} to start streaming data.
      * <p>
      * This is a "factory method" and can be called multiple times, each time starting a new {@link Subscription}.
      * <p>
      * Each {@link Subscription} will work for only a single {@link Subscriber}.
      * <p>
-     * A {@link Subscriber} should only subscribe once to a single {@link Publisher}.
+     * A {@link Subscriber} should only subscribe once to a single {@link Flow.Publisher}.
      * <p>
-     * If the {@link Publisher} rejects the subscription attempt or otherwise fails it will
+     * If the {@link Flow.Publisher} rejects the subscription attempt or otherwise fails it will
      * signal the error via {@link Subscriber#onError}.
      *
-     * @param subscriber the {@link Subscriber} that will consume signals from this {@link Publisher}
+     * @param subscriber the {@link Subscriber} that will consume signals from this {@link Flow.Publisher}
      */
     @Override
     public void subscribe(
@@ -98,14 +119,14 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
     /* ----------------------------------------------------- */
 
     /**
-     * Invoked after calling {@link Publisher#subscribe(Subscriber)}.
+     * Invoked after calling {@link Flow.Publisher#subscribe(Subscriber)}.
      * <p>
      * No data will start flowing until {@link Subscription#request(long)} is invoked.
      * <p>
      * It is the responsibility of this {@link Subscriber} instance to call {@link Subscription#request(long)} whenever more
      * data is wanted.
      * <p>
-     * The {@link Publisher} will send notifications only in response to {@link Subscription#request(long)}.
+     * The {@link Flow.Publisher} will send notifications only in response to {@link Subscription#request(long)}.
      *
      * @param subscription
      *        {@link Subscription} that allows requesting data via {@link Subscription#request(long)}
@@ -126,7 +147,7 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
     }
 
     /**
-     * Data notification sent by the {@link Publisher} in response to requests to {@link Subscription#request(long)}.
+     * Data notification sent by the {@link Flow.Publisher} in response to requests to {@link Subscription#request(long)}.
      *
      * @param message the element signaled
      */
@@ -198,21 +219,22 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
     /* ----------------------------------------------------- */
 
     /**
-     * No events will be sent by a {@link Publisher} until demand is signaled via this method.
+     * No events will be sent by a {@link Flow.Publisher} until demand is signaled via this method.
      * <p>
      * It can be called however often and whenever needed—but if the outstanding cumulative demand ever becomes Long.MAX_VALUE
      * or more,
-     * it may be treated by the {@link Publisher} as "effectively unbounded".
+     * it may be treated by the {@link Flow.Publisher} as "effectively unbounded".
      * <p>
-     * Whatever has been requested can be sent by the {@link Publisher} so only signal demand for what can be safely handled.
+     * Whatever has been requested can be sent by the {@link Flow.Publisher} so only signal demand for what can be safely
+     * handled.
      * <p>
-     * A {@link Publisher} can send less than is requested if the stream ends but
+     * A {@link Flow.Publisher} can send less than is requested if the stream ends but
      * then must emit either {@link Subscriber#onError(Throwable)} or {@link Subscriber#onComplete()}.
      * <p>
      * <strong>Note that this method is expected to be called only once on a given sender.</strong>
      * </p>
      *
-     * @param l the strictly positive number of elements to requests to the upstream {@link Publisher}
+     * @param l the strictly positive number of elements to requests to the upstream {@link Flow.Publisher}
      */
     @Override
     public void request(long l) {
@@ -223,7 +245,7 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
     }
 
     /**
-     * Request the {@link Publisher} to stop sending data and clean up resources.
+     * Request the {@link Flow.Publisher} to stop sending data and clean up resources.
      * <p>
      * Data may still be sent to meet previously signalled demand after calling cancel.
      */
@@ -248,10 +270,8 @@ public class RabbitMQMessageSender implements Processor<Message<?>, Message<?>>,
         final int retryInterval = configuration.getReconnectInterval();
         final String defaultRoutingKey = configuration.getDefaultRoutingKey();
 
-        final RabbitMQMessageConverter.OutgoingRabbitMQMessage outgoingRabbitMQMessage = RabbitMQMessageConverter.convert(msg,
-                exchange, defaultRoutingKey, defaultTtl, isTracingEnabled,
-                Arrays.stream(configuration.getTracingAttributeHeaders().split(","))
-                        .map(String::trim).collect(Collectors.toList()));
+        final RabbitMQMessageConverter.OutgoingRabbitMQMessage outgoingRabbitMQMessage = RabbitMQMessageConverter
+                .convert(instrumenter, msg, exchange, defaultRoutingKey, defaultTtl, isTracingEnabled);
 
         RabbitMQLogging.log.sendingMessageToExchange(exchange, outgoingRabbitMQMessage.getRoutingKey());
         return publisher.publish(exchange, outgoingRabbitMQMessage.getRoutingKey(), outgoingRabbitMQMessage.getProperties(),

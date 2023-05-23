@@ -3,11 +3,12 @@ package io.smallrye.reactive.messaging.providers.helpers;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import javax.enterprise.inject.Instance;
-import javax.enterprise.inject.literal.NamedLiteral;
-import javax.enterprise.inject.spi.Prioritized;
+import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.literal.NamedLiteral;
+import jakarta.enterprise.inject.spi.Prioritized;
 
 import io.smallrye.common.annotation.Identifier;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderLogging;
@@ -33,5 +34,14 @@ public class CDIUtils {
             }
         }
         return matching;
+    }
+
+    public static <T> T getInstanceById(Instance<T> instances, String identifier, Supplier<T> defaultSupplier) {
+        Instance<T> instanceById = getInstanceById(instances, identifier);
+        if (instanceById.isUnsatisfied()) {
+            return defaultSupplier.get();
+        } else {
+            return instanceById.get();
+        }
     }
 }

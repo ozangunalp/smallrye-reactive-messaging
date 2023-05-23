@@ -14,39 +14,36 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.Priority;
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.context.BeforeDestroyed;
-import javax.enterprise.event.Observes;
-import javax.enterprise.event.Reception;
-import javax.enterprise.inject.Any;
-import javax.enterprise.inject.Instance;
-import javax.inject.Inject;
+import javax.net.ssl.SSLContext;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Priority;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.BeforeDestroyed;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.event.Reception;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.spi.Connector;
-import org.eclipse.microprofile.reactive.messaging.spi.IncomingConnectorFactory;
-import org.eclipse.microprofile.reactive.messaging.spi.OutgoingConnectorFactory;
-import org.eclipse.microprofile.reactive.streams.operators.PublisherBuilder;
-import org.eclipse.microprofile.reactive.streams.operators.ReactiveStreams;
-import org.eclipse.microprofile.reactive.streams.operators.SubscriberBuilder;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
-import io.opentelemetry.api.trace.Span;
-import io.opentelemetry.api.trace.SpanBuilder;
-import io.opentelemetry.api.trace.SpanKind;
-import io.opentelemetry.api.trace.Tracer;
-import io.opentelemetry.context.Context;
-import io.opentelemetry.semconv.trace.attributes.SemanticAttributes;
+import io.opentelemetry.instrumentation.api.instrumenter.Instrumenter;
+import io.opentelemetry.instrumentation.api.instrumenter.InstrumenterBuilder;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessageOperation;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingAttributesExtractor;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingAttributesGetter;
+import io.opentelemetry.instrumentation.api.instrumenter.messaging.MessagingSpanNameExtractor;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.operators.multi.processors.BroadcastProcessor;
-import io.smallrye.reactive.messaging.TracingMetadata;
 import io.smallrye.reactive.messaging.amqp.fault.AmqpAccept;
 import io.smallrye.reactive.messaging.amqp.fault.AmqpFailStop;
 import io.smallrye.reactive.messaging.amqp.fault.AmqpFailureHandler;
@@ -54,10 +51,16 @@ import io.smallrye.reactive.messaging.amqp.fault.AmqpModifiedFailed;
 import io.smallrye.reactive.messaging.amqp.fault.AmqpModifiedFailedAndUndeliverableHere;
 import io.smallrye.reactive.messaging.amqp.fault.AmqpReject;
 import io.smallrye.reactive.messaging.amqp.fault.AmqpRelease;
+import io.smallrye.reactive.messaging.amqp.tracing.AmqpAttributesExtractor;
+import io.smallrye.reactive.messaging.amqp.tracing.AmqpMessageTextMapGetter;
 import io.smallrye.reactive.messaging.annotations.ConnectorAttribute;
+import io.smallrye.reactive.messaging.connector.InboundConnector;
+import io.smallrye.reactive.messaging.connector.OutboundConnector;
 import io.smallrye.reactive.messaging.health.HealthReport;
 import io.smallrye.reactive.messaging.health.HealthReporter;
 import io.smallrye.reactive.messaging.providers.connectors.ExecutionHolder;
+import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
+import io.smallrye.reactive.messaging.tracing.TracingUtils;
 import io.vertx.amqp.AmqpClientOptions;
 import io.vertx.amqp.AmqpReceiverOptions;
 import io.vertx.amqp.AmqpSenderOptions;
@@ -84,6 +87,7 @@ import io.vertx.proton.ProtonSender;
 @ConnectorAttribute(name = "address", direction = INCOMING_AND_OUTGOING, description = "The AMQP address. If not set, the channel name is used", type = "string")
 @ConnectorAttribute(name = "link-name", direction = INCOMING_AND_OUTGOING, description = "The name of the link. If not set, the channel name is used.", type = "string")
 @ConnectorAttribute(name = "client-options-name", direction = INCOMING_AND_OUTGOING, description = "The name of the AMQP Client Option bean used to customize the AMQP client configuration", type = "string", alias = "amqp-client-options-name")
+@ConnectorAttribute(name = "client-ssl-context-name", direction = INCOMING_AND_OUTGOING, description = "The name of an SSLContext bean to use for connecting to AMQP when SSL is used", type = "string", alias = "amqp-client-ssl-context-name", hiddenFromDocumentation = true)
 @ConnectorAttribute(name = "tracing-enabled", direction = INCOMING_AND_OUTGOING, description = "Whether tracing is enabled (default) or disabled", type = "boolean", defaultValue = "true")
 @ConnectorAttribute(name = "health-timeout", direction = INCOMING_AND_OUTGOING, description = "The max number of seconds to wait to determine if the connection with the broker is still established for the readiness check. After that threshold, the check is considered as failed.", type = "int", defaultValue = "3")
 @ConnectorAttribute(name = "cloud-events", type = "boolean", direction = INCOMING_AND_OUTGOING, description = "Enables (default) or disables the Cloud Event support. If enabled on an _incoming_ channel, the connector analyzes the incoming records and try to create Cloud Event metadata. If enabled on an _outgoing_, the connector sends the outgoing messages as Cloud Event if the message includes Cloud Event Metadata.", defaultValue = "true")
@@ -108,11 +112,9 @@ import io.vertx.proton.ProtonSender;
 @ConnectorAttribute(name = "cloud-events-insert-timestamp", type = "boolean", direction = ConnectorAttribute.Direction.OUTGOING, description = "Whether or not the connector should insert automatically the `time` attribute into the outgoing Cloud Event. Requires `cloud-events` to be set to `true`. This value is used if the message does not configure the `time` attribute itself", alias = "cloud-events-default-timestamp", defaultValue = "true")
 @ConnectorAttribute(name = "cloud-events-mode", type = "string", direction = ConnectorAttribute.Direction.OUTGOING, description = "The Cloud Event mode (`structured` or `binary` (default)). Indicates how are written the cloud events in the outgoing record", defaultValue = "binary")
 
-public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnectorFactory, HealthReporter {
+public class AmqpConnector implements InboundConnector, OutboundConnector, HealthReporter {
 
     public static final String CONNECTOR_NAME = "smallrye-amqp";
-
-    static Tracer TRACER;
 
     @Inject
     private ExecutionHolder executionHolder;
@@ -120,6 +122,10 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
     @Inject
     @Any
     private Instance<AmqpClientOptions> clientOptions;
+
+    @Inject
+    @Any
+    private Instance<SSLContext> clientSslContexts;
 
     private final List<AmqpClient> clients = new CopyOnWriteArrayList<>();
 
@@ -148,6 +154,8 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
      */
     private final Map<String, ConnectionHolder> holders = new ConcurrentHashMap<>();
 
+    private Instrumenter<AmqpMessage<?>, Void> instrumenter;
+
     void setup(ExecutionHolder executionHolder) {
         this.executionHolder = executionHolder;
     }
@@ -158,7 +166,19 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
 
     @PostConstruct
     void init() {
-        TRACER = GlobalOpenTelemetry.getTracerProvider().get("io.smallrye.reactive.messaging.amqp");
+        // TODO - radcortez - We may want to move this to the constructor injection. SR OTel provides CDI Producer for OTel
+        AmqpAttributesExtractor amqpAttributesExtractor = new AmqpAttributesExtractor();
+        MessagingAttributesGetter<AmqpMessage<?>, Void> messagingAttributesGetter = amqpAttributesExtractor
+                .getMessagingAttributesGetter();
+        InstrumenterBuilder<AmqpMessage<?>, Void> builder = Instrumenter.builder(GlobalOpenTelemetry.get(),
+                "io.smallrye.reactive.messaging",
+                MessagingSpanNameExtractor.create(messagingAttributesGetter, MessageOperation.RECEIVE));
+
+        instrumenter = builder
+                .addAttributesExtractor(
+                        MessagingAttributesExtractor.create(messagingAttributesGetter, MessageOperation.RECEIVE))
+                .addAttributesExtractor(amqpAttributesExtractor)
+                .buildConsumerInstrumenter(AmqpMessageTextMapGetter.INSTANCE);
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -181,7 +201,7 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
 
         return Multi.createFrom().deferred(
                 () -> {
-                    Multi<AmqpMessage<?>> stream = receiver.toMulti()
+                    Multi<Message<?>> stream = receiver.toMulti()
                             .onItem().transformToUniAndConcatenate(m -> {
                                 try {
                                     return Uni.createFrom().item(new AmqpMessage<>(m, holder.getContext(), onNack,
@@ -193,7 +213,8 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
                             });
 
                     if (tracingEnabled) {
-                        stream = stream.onItem().invoke(this::incomingTrace);
+                        stream = stream.onItem()
+                                .transform(m -> TracingUtils.traceIncoming(instrumenter, m, (AmqpMessage<?>) m));
                     }
 
                     return Multi.createBy().merging().streams(stream, processor);
@@ -201,7 +222,7 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
     }
 
     @Override
-    public PublisherBuilder<? extends Message<?>> getPublisherBuilder(Config config) {
+    public Flow.Publisher<? extends Message<?>> getPublisher(Config config) {
         AmqpConnectorIncomingConfiguration ic = new AmqpConnectorIncomingConfiguration(config);
         String address = ic.getAddress().orElseGet(ic::getChannel);
 
@@ -219,7 +240,8 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
                 .setCapabilities(getClientCapabilities(ic))
                 .setSelector(ic.getSelector().orElse(null));
 
-        AmqpClient client = AmqpClientHelper.createClient(this, ic, clientOptions);
+        AmqpClient client = AmqpClientHelper.createClient(this, ic, clientOptions, clientSslContexts);
+
         ConnectionHolder holder = new ConnectionHolder(client, ic, getVertx());
         holders.put(ic.getChannel(), holder);
 
@@ -246,18 +268,18 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
             multi = multi.broadcast().toAllSubscribers();
         }
 
-        return ReactiveStreams.fromPublisher(multi);
+        return multi;
     }
 
     @Override
-    public SubscriberBuilder<? extends Message<?>, Void> getSubscriberBuilder(Config config) {
+    public Flow.Subscriber<? extends Message<?>> getSubscriber(Config config) {
         AmqpConnectorOutgoingConfiguration oc = new AmqpConnectorOutgoingConfiguration(config);
         String configuredAddress = oc.getAddress().orElseGet(oc::getChannel);
 
         opened.put(oc.getChannel(), false);
 
         AtomicReference<AmqpSender> sender = new AtomicReference<>();
-        AmqpClient client = AmqpClientHelper.createClient(this, oc, clientOptions);
+        AmqpClient client = AmqpClientHelper.createClient(this, oc, clientOptions, clientSslContexts);
         String link = oc.getLinkName().orElseGet(oc::getChannel);
         ConnectionHolder holder = new ConnectionHolder(client, oc, getVertx());
 
@@ -313,13 +335,10 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
                 getSender);
         processors.put(oc.getChannel(), processor);
 
-        return ReactiveStreams.<Message<?>> builder()
-                .via(processor)
-                .onError(t -> {
-                    log.failureReported(oc.getChannel(), t);
-                    opened.put(oc.getChannel(), false);
-                })
-                .ignore();
+        return MultiUtils.via(processor, m -> m.onFailure().invoke(t -> {
+            log.failureReported(oc.getChannel(), t);
+            opened.put(oc.getChannel(), false);
+        }));
     }
 
     private boolean isLinkOpen(AmqpSender current) {
@@ -439,32 +458,4 @@ public class AmqpConnector implements IncomingConnectorFactory, OutgoingConnecto
         terminate(null);
     }
 
-    private void incomingTrace(AmqpMessage<?> message) {
-        TracingMetadata tracingMetadata = TracingMetadata.fromMessage(message).orElse(TracingMetadata.empty());
-
-        final SpanBuilder spanBuilder = TRACER.spanBuilder(message.getAddress() + " receive")
-                .setSpanKind(SpanKind.CONSUMER);
-
-        // Handle possible parent span
-        final Context parentSpanContext = tracingMetadata.getPreviousContext();
-        if (parentSpanContext != null) {
-            spanBuilder.setParent(parentSpanContext);
-        } else {
-            spanBuilder.setNoParent();
-        }
-
-        final Span span = spanBuilder.startSpan();
-
-        // Set Span attributes
-        span.setAttribute(SemanticAttributes.MESSAGING_SYSTEM, "AMQP 1.0");
-        span.setAttribute(SemanticAttributes.MESSAGING_DESTINATION, message.getAddress());
-        span.setAttribute(SemanticAttributes.MESSAGING_DESTINATION_KIND, "queue");
-
-        // Make available as parent for subsequent spans inside message processing
-        span.makeCurrent();
-
-        message.injectTracingMetadata(tracingMetadata.withSpan(span));
-
-        span.end();
-    }
 }
