@@ -14,6 +14,7 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
+
 import org.junit.jupiter.api.Test;
 
 import io.smallrye.reactive.messaging.pulsar.PulsarConnector;
@@ -121,9 +122,11 @@ public class PulsarNackTest extends WeldTestBase {
         // Run app
         FailingConsumingApp app = runApplication(config()
                 .with("mp.messaging.incoming.data.failure-strategy", "nack")
+                .with("mp.messaging.incoming.data.subscriptionInitialPosition", SubscriptionInitialPosition.Earliest)
                 .with("mp.messaging.incoming.data.negativeAckRedeliveryDelayMicros", 100)
                 .with("mp.messaging.incoming.data.deadLetterPolicy.maxRedeliverCount", 2)
                 .with("mp.messaging.incoming.data.deadLetterPolicy.deadLetterTopic", topic + "-dlq")
+                .with("mp.messaging.incoming.data.deadLetterPolicy.initialSubscriptionName", "initial-dlq-sub")
                 .with("mp.messaging.incoming.data.subscriptionType", "Shared"), FailingConsumingApp.class);
         // Produce messages
         send(client.newProducer(Schema.INT32)
@@ -142,11 +145,11 @@ public class PulsarNackTest extends WeldTestBase {
         receive(client.newConsumer(Schema.INT32)
                 .topic(topic + "-dlq")
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
-                .subscriptionName("subscription")
+                .subscriptionName("initial-dlq-sub")
                 .subscribe(), 10, retries::add);
 
         // Check for retried messages
-        await().untilAsserted(() -> assertThat(retries).hasSize(10));
+        await().untilAsserted(() -> assertThat(retries).extracting(Message::getValue).hasSize(10));
     }
 
     @ApplicationScoped
