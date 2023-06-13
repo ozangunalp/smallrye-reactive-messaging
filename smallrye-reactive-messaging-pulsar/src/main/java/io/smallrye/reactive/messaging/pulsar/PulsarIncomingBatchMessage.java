@@ -4,6 +4,7 @@ import static io.smallrye.reactive.messaging.providers.locals.ContextAwareMessag
 import static io.smallrye.reactive.messaging.pulsar.i18n.PulsarMessages.msg;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -64,17 +65,11 @@ public class PulsarIncomingBatchMessage<T> implements PulsarBatchMessage<T>, Met
 
     @Override
     public CompletionStage<Void> ack() {
-        return Multi.createFrom().iterable(incomingMessages)
-                .plug(stream -> {
-                    var txnMetadata = getMetadata(PulsarTransactionMetadata.class);
-                    if (txnMetadata.isPresent()) {
-                        return stream.onItem().invoke(m -> ((PulsarIncomingMessage) m).injectMetadata(txnMetadata.get()));
-                    } else {
-                        return stream;
-                    }
-                })
-                .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.getAck()))
-                .toUni().subscribeAsCompletionStage();
+        return CompletableFuture.allOf(incomingMessages.stream().map(m -> {
+            getMetadata(PulsarTransactionMetadata.class)
+                    .ifPresent(pulsarTransactionMetadata -> ((PulsarIncomingMessage) m).injectMetadata(pulsarTransactionMetadata));
+            return m.ack().thenAccept(x -> System.out.println("-acked " + m.getPayload() + " in " + m.getMetadata(PulsarTransactionMetadata.class)));
+        }).toArray(CompletableFuture[]::new));
     }
 
     @Override
@@ -84,9 +79,13 @@ public class PulsarIncomingBatchMessage<T> implements PulsarBatchMessage<T>, Met
 
     @Override
     public CompletionStage<Void> nack(Throwable reason, Metadata metadata) {
-        return Multi.createFrom().iterable(incomingMessages)
-                .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.nack(reason, metadata)))
-                .toUni().subscribeAsCompletionStage();
+        return CompletableFuture.allOf(incomingMessages.stream().map(m -> m.nack(reason, metadata).thenAccept(x -> {
+                    System.out.println("-nacked " + m.getPayload() + " : " + reason.getMessage());
+                }))
+                .toArray(CompletableFuture[]::new));
+//        return Multi.createFrom().iterable(incomingMessages)
+//                .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.nack(reason, metadata)))
+//                .toUni().subscribeAsCompletionStage();
     }
 
     @Override

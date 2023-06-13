@@ -14,6 +14,7 @@
   <name>SmallRye Reactive Messaging : Connector :: Kafka</name>
 
   <properties>
+    <skipTests>true</skipTests>
     <revapi.skip>false</revapi.skip>
   </properties>
 

@@ -115,7 +115,7 @@ public interface PulsarTransactions<T> extends EmitterType {
     @CheckReturnValue
     default Uni<Void> withTransactionAndAck(Message<?> message, Function<TransactionalEmitter<T>, Uni<Void>> work) {
         return withTransaction(message, work)
-                .onFailure().recoverWithUni(throwable -> Uni.createFrom().completionStage(message.nack(throwable)));
+                .onFailure().recoverWithNull();
     }
 
     /**

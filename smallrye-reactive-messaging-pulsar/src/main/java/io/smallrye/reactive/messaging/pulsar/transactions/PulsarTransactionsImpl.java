@@ -57,7 +57,7 @@ public class PulsarTransactionsImpl<T> extends MutinyEmitterImpl<T> implements P
     @Override
     public <R> Uni<R> withTransaction(Duration txnTimeout, Message<?> message, Function<TransactionalEmitter<T>, Uni<R>> work) {
         return new PulsarTransactionEmitter<R>(txnTimeout,
-                txn -> Uni.createFrom().completionStage(message.ack()),
+                txn -> Uni.createFrom().completionStage(message::ack),
                 PulsarTransactionsImpl::defaultAfterCommit,
                 (txn, throwable) -> {
                     if (!(throwable.getCause() instanceof PulsarClientException.TransactionConflictException)) {
@@ -94,7 +94,9 @@ public class PulsarTransactionsImpl<T> extends MutinyEmitterImpl<T> implements P
 
     @Override
     public boolean isTransactionInProgress() {
-        return txnCount.get() != 0;
+        int count = txnCount.get();
+        System.out.println("tx count:" + count);
+        return count != 0;
     }
 
     private static final Uni<Void> VOID_UNI = Uni.createFrom().voidItem();
@@ -169,7 +171,7 @@ public class PulsarTransactionsImpl<T> extends MutinyEmitterImpl<T> implements P
             return Multi.createFrom().iterable(producerChannels)
                     .map(pulsarClientService::getProducer)
                     .filter(Objects::nonNull)
-                    .onItem().transformToUniAndMerge(p -> Uni.createFrom().completionStage(p.flushAsync()))
+                    .onItem().transformToUniAndMerge(p -> Uni.createFrom().completionStage(p::flushAsync))
                     .toUni();
         }
 
@@ -211,7 +213,13 @@ public class PulsarTransactionsImpl<T> extends MutinyEmitterImpl<T> implements P
 
         private Uni<Void> commit() {
             return beforeCommit.apply(currentTransaction)
-                    .chain(txn -> Uni.createFrom().completionStage(currentTransaction::commit));
+                    .onItemOrFailure().transformToUni((unused, throwable) -> {
+                        if (throwable != null) {
+                            return this.abort(throwable);
+                        } else {
+                            return Uni.createFrom().completionStage(currentTransaction::commit);
+                        }
+                    });
         }
 
         private Uni<Void> abort(Throwable throwable) {
