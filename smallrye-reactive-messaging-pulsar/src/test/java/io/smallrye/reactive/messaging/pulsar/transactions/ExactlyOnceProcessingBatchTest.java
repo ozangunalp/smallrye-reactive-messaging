@@ -25,7 +25,6 @@ import org.apache.pulsar.client.impl.conf.ConsumerConfigurationData;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.OnOverflow;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import io.smallrye.common.annotation.Identifier;
@@ -33,7 +32,6 @@ import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.pulsar.PulsarConnector;
 import io.smallrye.reactive.messaging.pulsar.PulsarIncomingBatchMessage;
 import io.smallrye.reactive.messaging.pulsar.PulsarMessage;
-import io.smallrye.reactive.messaging.pulsar.TestTags;
 import io.smallrye.reactive.messaging.pulsar.base.WeldTestBase;
 import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
 
@@ -94,16 +92,12 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
      * For exactly-once processing the broker needs to enable the Message deduplication with
      * broker config <code>brokerDeduplicationEnabled=true</code> and producer `sendTimeoutMs` needs to be `0`.
      *
-     * However only this doesn't solve the issue of duplicated items.
-     *
      * There is also batch index level acknowledgement to avoid duplicated items which can be enabled with,
      * The broker config <code>acknowledgmentAtBatchIndexLevelEnabled=true</code> and consumer config `batchIndexAckEnable` to
      * `true.
      *
-     * There are still duplicate items delivered to the consumer batch after an transaction abort.
      */
     @Test
-    @Tag(TestTags.FLAKY)
     void testExactlyOnceProcessorWithProcessingError() throws PulsarAdminException, PulsarClientException {
         addBeans(ConsumerConfig.class);
         this.inTopic = UUID.randomUUID().toString();
@@ -124,8 +118,6 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
                 .enableBatchIndexAcknowledgment(true)
                 .subscribe()).subscribe().with(messages -> {
                     for (Message<Integer> message : messages) {
-                        System.out.println(
-                                "-received " + message.getSequenceId() + " - " + message.getKey() + ":" + message.getValue());
                         list.add(message.getValue());
                     }
                 });
@@ -163,6 +155,7 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
                 .with("mp.messaging.incoming.exactly-once-consumer.subscriptionInitialPosition", "Earliest")
                 .with("mp.messaging.incoming.exactly-once-consumer.enableTransaction", true)
                 .with("mp.messaging.incoming.exactly-once-consumer.negativeAckRedeliveryDelayMicros", 5000)
+                .with("mp.messaging.incoming.exactly-once-consumer.batchIndexAckEnabled", true)
                 .with("mp.messaging.incoming.exactly-once-consumer.schema", "INT32")
                 .with("mp.messaging.incoming.exactly-once-consumer.batchReceive", true);
     }

@@ -117,7 +117,6 @@ public class PulsarNackTest extends WeldTestBase {
 
     @Test
     void testDeadLetterTopic() throws PulsarClientException {
-        addBeans(PulsarReconsumeLater.Factory.class);
         // Run app
         FailingConsumingApp app = runApplication(config()
                 .with("mp.messaging.incoming.data.failure-strategy", "nack")
@@ -126,13 +125,14 @@ public class PulsarNackTest extends WeldTestBase {
                 .with("mp.messaging.incoming.data.deadLetterPolicy.maxRedeliverCount", 2)
                 .with("mp.messaging.incoming.data.deadLetterPolicy.deadLetterTopic", topic + "-dlq")
                 .with("mp.messaging.incoming.data.deadLetterPolicy.initialSubscriptionName", "initial-dlq-sub")
+                .with("mp.messaging.incoming.data.deadLetterPolicy.batchIndexAckEnabled", true)
                 .with("mp.messaging.incoming.data.subscriptionType", "Shared"), FailingConsumingApp.class);
         // Produce messages
         send(client.newProducer(Schema.INT32)
                 .producerName("test-producer")
                 .enableBatching(false)
                 .topic(topic)
-                .create(), NUMBER_OF_MESSAGES, i -> i);
+                .create(), NUMBER_OF_MESSAGES, (i, p) -> p.newMessage().sequenceId(i).value(i));
 
         // Check for consumed messages in app
         await().untilAsserted(() -> {
@@ -142,9 +142,11 @@ public class PulsarNackTest extends WeldTestBase {
 
         List<Message<Integer>> retries = new CopyOnWriteArrayList<>();
         receive(client.newConsumer(Schema.INT32)
+                .consumerName("dlq-consumer")
                 .topic(topic + "-dlq")
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                 .subscriptionName("initial-dlq-sub")
+                .enableBatchIndexAcknowledgment(true)
                 .subscribe()).subscribe().with(retries::add);
 
         // Check for retried messages
