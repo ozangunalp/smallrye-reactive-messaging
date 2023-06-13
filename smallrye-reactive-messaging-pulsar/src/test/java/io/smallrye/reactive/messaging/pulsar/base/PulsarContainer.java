@@ -48,6 +48,7 @@ public class PulsarContainer extends GenericContainer<PulsarContainer> {
         command += "export PULSAR_PREFIX_transactionCoordinatorEnabled=true\n";
         command += "export PULSAR_PREFIX_systemTopicEnabled=true\n";
         command += "export PULSAR_PREFIX_brokerDeduplicationEnabled=true\n";
+        command += "export PULSAR_PREFIX_acknowledgmentAtBatchIndexLevelEnabled=true\n";
         command += "bin/apply-config-from-env.py conf/standalone.conf && bin/pulsar standalone -nfw -nss";
         copyFileToContainer(
                 Transferable.of(command.getBytes(StandardCharsets.UTF_8), 700),

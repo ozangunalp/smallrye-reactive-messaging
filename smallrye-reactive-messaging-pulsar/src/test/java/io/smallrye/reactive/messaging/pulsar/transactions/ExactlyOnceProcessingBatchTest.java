@@ -11,25 +11,29 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import io.smallrye.reactive.messaging.pulsar.PulsarOutgoingMessageMetadata;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
 
 import org.apache.pulsar.client.admin.PulsarAdminException;
+import org.apache.pulsar.client.api.BatchReceivePolicy;
+import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
+import org.apache.pulsar.client.impl.conf.ConsumerConfigurationData;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.OnOverflow;
-import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import io.smallrye.common.annotation.Identifier;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.pulsar.PulsarConnector;
 import io.smallrye.reactive.messaging.pulsar.PulsarIncomingBatchMessage;
 import io.smallrye.reactive.messaging.pulsar.PulsarMessage;
+import io.smallrye.reactive.messaging.pulsar.PulsarOutgoingMessageMetadata;
 import io.smallrye.reactive.messaging.pulsar.TestTags;
 import io.smallrye.reactive.messaging.pulsar.base.WeldTestBase;
 import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
@@ -92,28 +96,35 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
      * <code>brokerDeduplicationEnabled=true</code> and producer `sendTimeoutMs` needs to be `0`.
      * However this
      */
+    //    @RepeatedTest(100)
     @Test
     @Tag(TestTags.FLAKY)
     void testExactlyOnceProcessorWithProcessingError() throws PulsarAdminException, PulsarClientException {
+        addBeans(ConsumerConfig.class);
         this.inTopic = UUID.randomUUID().toString();
         admin.topics().createPartitionedTopic(inTopic, 3);
         this.outTopic = UUID.randomUUID().toString();
         admin.topics().createPartitionedTopic(outTopic, 3);
+        System.out.println(admin.transactions().getCoordinatorStats());
         int numberOfRecords = 1000;
         MapBasedConfig config = new MapBasedConfig(producerConfig());
         config.putAll(consumerConfig());
         ExactlyOnceProcessorWithProcessingError app = runApplication(config, ExactlyOnceProcessorWithProcessingError.class);
 
         List<Integer> list = new CopyOnWriteArrayList<>();
-        receive(client.newConsumer(Schema.INT32)
+        receiveBatch(client.newConsumer(Schema.INT32)
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                 .consumerName("test-consumer")
                 .subscriptionName("test-subscription")
                 .topic(this.outTopic)
-                .subscribe()).subscribe().with(m -> {
-            System.out.println("-received " + m.getValue());
-            list.add(m.getValue());
-        });
+                .enableBatchIndexAcknowledgment(true)
+                .subscribe()).subscribe().with(messages -> {
+                    for (Message<Integer> message : messages) {
+                        System.out.println(
+                                "-received " + message.getSequenceId() + " - " + message.getKey() + ":" + message.getValue());
+                        list.add(message.getValue());
+                    }
+                });
 
         send(client.newProducer(Schema.INT32)
                 .producerName("test-producer")
@@ -123,9 +134,12 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
         await().pollDelay(3, TimeUnit.SECONDS).untilAsserted(() -> assertThat(app.getProcessed())
                 .containsAll(IntStream.range(0, numberOfRecords).boxed().collect(Collectors.toList())));
 
-        await().untilAsserted(() -> assertThat(list)
-                .containsAll(IntStream.range(0, numberOfRecords).boxed().collect(Collectors.toList()))
-                .doesNotHaveDuplicates());
+        await().untilAsserted(() -> {
+            System.out.println("size " + list.size());
+            assertThat(list)
+                    .containsAll(IntStream.range(0, numberOfRecords).boxed().collect(Collectors.toList()))
+                    .doesNotHaveDuplicates();
+        });
     }
 
     private MapBasedConfig producerConfig() {
@@ -147,8 +161,24 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
                 .with("mp.messaging.incoming.exactly-once-consumer.subscriptionInitialPosition", "Earliest")
                 .with("mp.messaging.incoming.exactly-once-consumer.enableTransaction", true)
                 .with("mp.messaging.incoming.exactly-once-consumer.negativeAckRedeliveryDelayMicros", 5000)
+                .with("mp.messaging.incoming.exactly-once-consumer.batchIndexAckEnabled", true)
                 .with("mp.messaging.incoming.exactly-once-consumer.schema", "INT32")
                 .with("mp.messaging.incoming.exactly-once-consumer.batchReceive", true);
+    }
+
+    @ApplicationScoped
+    public static class ConsumerConfig {
+
+        @Produces
+        @Identifier("exactly-once-consumer")
+        ConsumerConfigurationData<Integer> data() {
+            var data = new ConsumerConfigurationData<Integer>();
+            data.setBatchReceivePolicy(BatchReceivePolicy.builder()
+                    .maxNumMessages(200)
+                    .timeout(30, TimeUnit.MILLISECONDS)
+                    .build());
+            return data;
+        }
     }
 
     @ApplicationScoped
@@ -174,7 +204,7 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
                     emitter.send(PulsarMessage.of(record.getPayload(), PulsarOutgoingMessageMetadata.builder()
                             .withKey(record.getKey())
                             .build()));
-//                    emitter.send(PulsarMessage.of(record.getPayload(), record.getKey()));
+                    //                    emitter.send(PulsarMessage.of(record.getPayload(), record.getKey()));
                 }
                 transaction.isTransactionInProgress();
                 System.out.println("processed " + batch.getPayload());
