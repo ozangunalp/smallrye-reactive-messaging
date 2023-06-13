@@ -104,20 +104,23 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
         config.putAll(consumerConfig());
         ExactlyOnceProcessorWithProcessingError app = runApplication(config, ExactlyOnceProcessorWithProcessingError.class);
 
-        send(client.newProducer(Schema.INT32)
-                .producerName("test-producer")
-                .topic(this.inTopic)
-                .create(), numberOfRecords, (i, producer) -> producer.newMessage().sequenceId(i).value(i).key("k-" + i));
-
         List<Integer> list = new CopyOnWriteArrayList<>();
         receive(client.newConsumer(Schema.INT32)
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                 .consumerName("test-consumer")
                 .subscriptionName("test-subscription")
                 .topic(this.outTopic)
-                .subscribe(), numberOfRecords, m -> list.add(m.getValue()));
+                .subscribe()).subscribe().with(m -> {
+            System.out.println("-received " + m.getValue());
+            list.add(m.getValue());
+        });
 
-        await().atMost(30, TimeUnit.SECONDS).untilAsserted(() -> assertThat(app.getProcessed())
+        send(client.newProducer(Schema.INT32)
+                .producerName("test-producer")
+                .topic(this.inTopic)
+                .create(), numberOfRecords, (i, producer) -> producer.newMessage().sequenceId(i).value(i).key("k-" + i));
+
+        await().pollDelay(3, TimeUnit.SECONDS).untilAsserted(() -> assertThat(app.getProcessed())
                 .containsAll(IntStream.range(0, numberOfRecords).boxed().collect(Collectors.toList())));
 
         await().untilAsserted(() -> assertThat(list)
