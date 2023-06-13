@@ -65,11 +65,25 @@ public class PulsarIncomingBatchMessage<T> implements PulsarBatchMessage<T>, Met
 
     @Override
     public CompletionStage<Void> ack() {
-        return CompletableFuture.allOf(incomingMessages.stream().map(m -> {
-            getMetadata(PulsarTransactionMetadata.class)
-                    .ifPresent(pulsarTransactionMetadata -> ((PulsarIncomingMessage) m).injectMetadata(pulsarTransactionMetadata));
-            return m.ack().thenAccept(x -> System.out.println("-acked " + m.getPayload() + " in " + m.getMetadata(PulsarTransactionMetadata.class)));
-        }).toArray(CompletableFuture[]::new));
+        return Multi.createFrom().iterable(incomingMessages)
+                .plug(stream -> {
+                    var txnMetadata = getMetadata(PulsarTransactionMetadata.class);
+                    if (txnMetadata.isPresent()) {
+                        return stream.onItem().invoke(m -> ((PulsarIncomingMessage) m).injectMetadata(txnMetadata.get()));
+                    } else {
+                        return stream;
+                    }
+                })
+                .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.getAck())
+                        .onItemOrFailure().invoke((unused, t) -> {
+                            if (t != null) {
+                                System.out.println("-failed ack " + m.getPayload() + " in " + m.getMetadata(PulsarTransactionMetadata.class) + " " + t.getMessage());
+                            } else {
+                                System.out.println("-acked " + m.getPayload() + " in " + m.getMetadata(PulsarTransactionMetadata.class));
+                            }
+                        })
+                )
+                .toUni().subscribeAsCompletionStage();
     }
 
     @Override
@@ -79,13 +93,10 @@ public class PulsarIncomingBatchMessage<T> implements PulsarBatchMessage<T>, Met
 
     @Override
     public CompletionStage<Void> nack(Throwable reason, Metadata metadata) {
-        return CompletableFuture.allOf(incomingMessages.stream().map(m -> m.nack(reason, metadata).thenAccept(x -> {
-                    System.out.println("-nacked " + m.getPayload() + " : " + reason.getMessage());
-                }))
-                .toArray(CompletableFuture[]::new));
-//        return Multi.createFrom().iterable(incomingMessages)
-//                .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.nack(reason, metadata)))
-//                .toUni().subscribeAsCompletionStage();
+        return Multi.createFrom().iterable(incomingMessages)
+                .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.nack(reason, metadata))
+                        .invoke(() -> System.out.println("-nacked " + m.getPayload() + " : " + reason.getMessage())))
+                .toUni().subscribeAsCompletionStage();
     }
 
     @Override

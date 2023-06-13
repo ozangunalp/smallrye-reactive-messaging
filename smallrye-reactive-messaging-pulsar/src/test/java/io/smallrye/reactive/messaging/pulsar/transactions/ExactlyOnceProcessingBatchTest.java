@@ -117,7 +117,7 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
                 .consumerName("test-consumer")
                 .subscriptionName("test-subscription")
                 .topic(this.outTopic)
-                .enableBatchIndexAcknowledgment(true)
+//                .enableBatchIndexAcknowledgment(true)
                 .subscribe()).subscribe().with(messages -> {
                     for (Message<Integer> message : messages) {
                         System.out.println(
@@ -175,6 +175,7 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
             var data = new ConsumerConfigurationData<Integer>();
             data.setBatchReceivePolicy(BatchReceivePolicy.builder()
                     .maxNumMessages(200)
+                            .maxNumBytes(1024 * 2)
                     .timeout(30, TimeUnit.MILLISECONDS)
                     .build());
             return data;
