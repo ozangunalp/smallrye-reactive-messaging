@@ -26,6 +26,7 @@ import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.OnOverflow;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -104,8 +105,6 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
      * There are still duplicate items delivered to the consumer batch after an transaction abort.
      */
     @Test
-    @Disabled
-    @Tag(TestTags.FLAKY)
     void testExactlyOnceProcessorWithProcessingError() throws PulsarAdminException, PulsarClientException {
         addBeans(ConsumerConfig.class);
         this.inTopic = UUID.randomUUID().toString();
@@ -138,7 +137,8 @@ public class ExactlyOnceProcessingBatchTest extends WeldTestBase {
                 .create(), numberOfRecords, (i, producer) -> producer.newMessage().sequenceId(i).value(i).key("k-" + i));
 
         await().untilAsserted(() -> assertThat(app.getProcessed())
-                .containsAll(IntStream.range(0, numberOfRecords).boxed().collect(Collectors.toList())));
+                .containsAll(IntStream.range(0, numberOfRecords).boxed().collect(Collectors.toList()))
+                .doesNotHaveDuplicates());
 
         await().untilAsserted(() -> assertThat(list)
                 .containsAll(IntStream.range(0, numberOfRecords).boxed().collect(Collectors.toList()))
