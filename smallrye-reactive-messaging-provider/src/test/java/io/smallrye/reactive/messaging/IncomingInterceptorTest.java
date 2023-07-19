@@ -83,7 +83,7 @@ public class IncomingInterceptorTest extends WeldTestBaseWithoutTails {
         final AtomicInteger interceptedMessages = new AtomicInteger();
 
         @Override
-        public Message<?> onMessage(Message<?> message) {
+        public Message<?> afterMessageReceive(Message<?> message) {
             interceptedMessages.incrementAndGet();
             return message.addMetadata(this);
         }

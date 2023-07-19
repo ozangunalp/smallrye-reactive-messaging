@@ -47,7 +47,7 @@ public class IncomingInterceptorDecorator implements PublisherDecorator {
             if (!matching.isEmpty()) {
                 IncomingInterceptor interceptor = matching.get(0);
                 multi = multi.map(m -> {
-                    Message<?> before = interceptor.onMessage(m);
+                    Message<?> before = interceptor.afterMessageReceive(m);
                     Message<?> withAck = before.withAck(() -> before.ack()
                             .thenAccept(Unchecked.consumer(x -> interceptor.onMessageAck(before))));
                     return withAck.withNack(t -> withAck.nack(t)
