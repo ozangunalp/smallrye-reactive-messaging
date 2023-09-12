@@ -1,6 +1,8 @@
 package io.smallrye.reactive.messaging.keyed;
 
-import java.lang.annotation.ElementType;
+import static java.lang.annotation.ElementType.FIELD;
+import static java.lang.annotation.ElementType.PARAMETER;
+
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
@@ -14,7 +16,7 @@ import org.eclipse.microprofile.reactive.messaging.Message;
  * When used, it by-pass the extractor lookup (based on {@link KeyValueExtractor#canExtract(Message, Type, Type)}
  * and {@link jakarta.enterprise.inject.spi.Prioritized}).
  */
-@Target(ElementType.PARAMETER)
+@Target({ PARAMETER, FIELD })
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Keyed {
 

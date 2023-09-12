@@ -1,7 +1,6 @@
 package io.smallrye.reactive.messaging.providers.extension;
 
 import static io.smallrye.reactive.messaging.providers.helpers.ConverterUtils.convert;
-import static io.smallrye.reactive.messaging.providers.helpers.KeyMultiUtils.extractKeyValueFunction;
 import static io.smallrye.reactive.messaging.providers.i18n.ProviderExceptions.ex;
 
 import java.lang.annotation.Annotation;
@@ -27,8 +26,11 @@ import org.reactivestreams.Publisher;
 
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.mutiny.tuples.Tuple2;
 import io.smallrye.reactive.messaging.*;
 import io.smallrye.reactive.messaging.keyed.KeyValueExtractor;
+import io.smallrye.reactive.messaging.keyed.Keyed;
+import io.smallrye.reactive.messaging.providers.helpers.KeyMultiUtils;
 import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
 import io.smallrye.reactive.messaging.providers.helpers.TypeUtils;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderExceptions;
@@ -59,10 +61,23 @@ public class ChannelProducer {
     <K, V> TableView<K, V> produceTable(InjectionPoint injectionPoint) {
         Type keyType = getFirstParameter(injectionPoint.getType()); // K key
         Type payloadType = getSecondParameter(injectionPoint.getType()); // V payload
+
         Multi<? extends Message<V>> source = cast(convert(getPublisher(injectionPoint), converters, payloadType));
         Type injectedKeyType = getRawTypeIfParameterized(keyType);
         Type injectedPayloadType = getRawTypeIfParameterized(payloadType);
-        return new DefaultTableView<>(source, extractKeyValueFunction(keyExtractors, injectedKeyType, injectedPayloadType));
+        Class<? extends KeyValueExtractor> keyExtractorType = getKeyExtractorType(injectionPoint);
+        Multi<Tuple2<K, V>> keyValueTupleMulti = KeyMultiUtils.convertToKeyValueTupleMulti(
+                source.onItem().call(m -> Uni.createFrom().completionStage(m.ack()).map(x -> m)),
+                keyExtractors, keyExtractorType, injectedKeyType, injectedPayloadType);
+        return new DefaultTableView<>(keyValueTupleMulti, false, true);
+    }
+
+    private Class<? extends KeyValueExtractor> getKeyExtractorType(InjectionPoint injectionPoint) {
+        Keyed keyed = injectionPoint.getAnnotated().getAnnotation(Keyed.class);
+        if (keyed == null) {
+            return null;
+        }
+        return keyed.value();
     }
 
     /**

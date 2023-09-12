@@ -7,11 +7,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-
-import org.eclipse.microprofile.reactive.messaging.Message;
 
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
@@ -39,20 +36,6 @@ public class DefaultTableView<K, V> extends AbstractMulti<Tuple2<K, V>> implemen
         }
     };
     private final boolean emitOnChange;
-
-    public DefaultTableView(Multi<? extends Message<V>> upstream, Function<Message<V>, Tuple2<K, V>> tupleExtractor) {
-        this(upstream, tupleExtractor, false);
-    }
-
-    public DefaultTableView(Multi<? extends Message<V>> upstream,
-            Function<Message<V>, Tuple2<K, V>> tupleExtractor,
-            boolean emitOnChange) {
-        this(ParameterValidation.nonNull(upstream, "upstream")
-                .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.ack()).map(x -> m))
-                .onItem().transform(tupleExtractor),
-                emitOnChange,
-                true);
-    }
 
     public DefaultTableView(Multi<? extends Tuple2<K, V>> upstream, boolean emitOnChange, boolean subscribeOnCreation) {
         this.data = new ConcurrentHashMap<>();

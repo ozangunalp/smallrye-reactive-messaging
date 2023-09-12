@@ -27,7 +27,18 @@
     "criticality" : "highlight",
     "minSeverity" : "POTENTIALLY_BREAKING",
     "minCriticality" : "documented",
-    "differences" : [ ]
+    "differences" : [
+        {
+            "code": "java.annotation.attributeValueChanged",
+            "old": "@interface io.smallrye.reactive.messaging.keyed.Keyed",
+            "new": "@interface io.smallrye.reactive.messaging.keyed.Keyed",
+            "annotationType": "java.lang.annotation.Target",
+            "attribute": "value",
+            "oldValue": "{java.lang.annotation.ElementType.PARAMETER}",
+            "newValue": "{java.lang.annotation.ElementType.PARAMETER, java.lang.annotation.ElementType.FIELD}",
+            "justification": "@Keyed annotation is also applicable to TableView injections using @Channel annotation"
+        }
+    ]
   }
 }, {
   "extension" : "revapi.reporter.json",

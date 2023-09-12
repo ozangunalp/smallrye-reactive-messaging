@@ -5,7 +5,6 @@ import static io.smallrye.reactive.messaging.providers.helpers.CDIUtils.getSorte
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 
 import jakarta.enterprise.inject.Instance;
 
@@ -25,40 +24,45 @@ public class KeyMultiUtils {
         // Avoid direct instantiation.
     }
 
-    public static <K, V> Function<Message<V>, Tuple2<K, V>> extractKeyValueFunction(
-            Instance<KeyValueExtractor> keyExtractors,
-            Type injectedTableKeyType, Type injectedTableValueType) {
-        return new Function<>() {
+    public static <K, V> Multi<Tuple2<K, V>> convertToKeyValueTupleMulti(Multi<? extends Message<?>> multi,
+            Instance<KeyValueExtractor> extractors,
+            Class<? extends KeyValueExtractor> keyExtractorType,
+            Type keyType, Type valueType) {
+        if (keyType == null || valueType == null) {
+            return null;
+        }
 
-            KeyValueExtractor actual;
-
-            @Override
-            public Tuple2<K, V> apply(Message<V> o) {
-                //noinspection ConstantConditions - it can be `null`
-                if (injectedTableKeyType == null || injectedTableValueType == null) {
-                    return null;
-                }
-
+        if (keyExtractorType == null) {
+            AtomicReference<KeyValueExtractor> reference = new AtomicReference<>();
+            return multi.map(m -> {
+                KeyValueExtractor actual = reference.get();
                 if (actual != null) {
                     // Use the cached converter.
-                    K extractKey = (K) actual.extractKey(o, injectedTableKeyType);
-                    V extractValue = (V) actual.extractValue(o, injectedTableValueType);
+                    K extractKey = (K) actual.extractKey(m, keyType);
+                    V extractValue = (V) actual.extractValue(m, valueType);
                     return Tuple2.of(extractKey, extractValue);
                 } else {
                     // Lookup and cache
-                    for (KeyValueExtractor ext : getSortedInstances(keyExtractors)) {
-                        if (ext.canExtract(o, injectedTableKeyType, injectedTableValueType)) {
-                            actual = ext;
-                            K extractKey = (K) actual.extractKey(o, injectedTableKeyType);
-                            V extractValue = (V) actual.extractValue(o, injectedTableValueType);
+                    for (KeyValueExtractor ext : getSortedInstances(extractors)) {
+                        if (ext.canExtract(m, keyType, valueType)) {
+                            actual = reference.compareAndSet(null, ext) ? ext : reference.get();
+                            K extractKey = (K) actual.extractKey(m, keyType);
+                            V extractValue = (V) actual.extractValue(m, valueType);
                             return Tuple2.of(extractKey, extractValue);
                         }
                     }
                     // No key extractor found
-                    return Tuple2.of(null, o.getPayload());
+                    return Tuple2.of(null, (V) m.getPayload());
                 }
-            }
-        };
+            });
+        } else {
+            KeyValueExtractor extractor = findExtractor(extractors, keyExtractorType);
+            return multi.map(message -> {
+                K extractKey = (K) extractor.extractKey(message, keyType);
+                V extractValue = (V) extractor.extractValue(message, valueType);
+                return Tuple2.of(extractKey, extractValue);
+            });
+        }
     }
 
     public static Multi<KeyedMulti<?, ?>> convertToKeyedMulti(Multi<? extends Message<?>> multi,
