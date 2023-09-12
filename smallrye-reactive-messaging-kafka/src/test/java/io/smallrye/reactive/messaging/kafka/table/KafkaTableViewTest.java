@@ -16,13 +16,13 @@ import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.junit.jupiter.api.Test;
 
-import io.smallrye.reactive.messaging.Table;
+import io.smallrye.reactive.messaging.TableView;
 import io.smallrye.reactive.messaging.kafka.ConsumerRecordKeyValueExtractor;
 import io.smallrye.reactive.messaging.kafka.base.KafkaCompanionTestBase;
 import io.smallrye.reactive.messaging.kafka.base.KafkaMapBasedConfig;
 import io.smallrye.reactive.messaging.kafka.converters.ConsumerRecordConverter;
 
-public class KafkaTableTest extends KafkaCompanionTestBase {
+public class KafkaTableViewTest extends KafkaCompanionTestBase {
 
     @Test
     public void testBeanUsingTable() {
@@ -65,7 +65,7 @@ public class KafkaTableTest extends KafkaCompanionTestBase {
 
         @Inject
         @Channel("table")
-        Table<String, String> myTable;
+        TableView<String, String> myTable;
 
         @Incoming("data")
         public void consume(ConsumerRecord<String, String> record) {

@@ -17,7 +17,7 @@ import io.smallrye.mutiny.tuples.Tuple2;
  * @param <K> the class of the key
  * @param <V> the class of the value
  */
-public interface Table<K, V> extends Multi<Tuple2<K, V>> {
+public interface TableView<K, V> extends Multi<Tuple2<K, V>> {
 
     Set<K> keys();
 
@@ -25,26 +25,28 @@ public interface Table<K, V> extends Multi<Tuple2<K, V>> {
 
     Map<K, V> fetch(Collection<K> keys);
 
-    Map<K, V> toMap();
+    Map<K, V> fetchAll();
 
     Multi<Map<K, V>> toMapStream();
 
     V get(K key);
 
-    Table<K, V> withEmitOnChange();
+    TableView<K, V> withEmitOnChange();
 
-    <T> Table<K, T> map(BiFunction<K, V, T> mapper);
+    TableView<K, V> subscribeNow();
 
-    <T> Table<T, V> mapKey(BiFunction<K, V, T> mapper);
+    <T> TableView<K, T> map(BiFunction<K, V, T> mapper);
 
-    <T> Table<K, T> chain(BiFunction<K, V, Uni<T>> mapper);
+    <T> TableView<T, V> mapKey(BiFunction<K, V, T> mapper);
 
-    <T> Table<T, V> chainKey(BiFunction<K, V, Uni<T>> mapper);
+    <T> TableView<K, T> chain(BiFunction<K, V, Uni<T>> mapper);
 
-    Table<K, V> filter(BiPredicate<K, V> predicate);
+    <T> TableView<T, V> chainKey(BiFunction<K, V, Uni<T>> mapper);
 
-    Table<K, V> filterKey(Predicate<K> predicate);
+    TableView<K, V> filter(BiPredicate<K, V> predicate);
 
-    Table<K, V> filterKey(K keyToMatch);
+    TableView<K, V> filterKey(Predicate<K> predicate);
+
+    TableView<K, V> filterKey(K keyToMatch);
 
 }

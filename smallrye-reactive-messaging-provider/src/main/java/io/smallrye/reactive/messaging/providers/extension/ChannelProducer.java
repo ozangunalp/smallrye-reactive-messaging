@@ -53,15 +53,15 @@ public class ChannelProducer {
     Instance<MessageKeyValueExtractor> keyExtractors;
 
     @Produces
-    @Typed({ Table.class })
+    @Typed({ TableView.class })
     @Channel("") // Stream name is ignored during type-safe resolution – Table<K, V>
-    <K, V> Table<K, V> produceTable(InjectionPoint injectionPoint) {
+    <K, V> TableView<K, V> produceTable(InjectionPoint injectionPoint) {
         Type keyType = getFirstParameter(injectionPoint.getType()); // K key
         Type payloadType = getSecondParameter(injectionPoint.getType()); // V payload
         Multi<? extends Message<V>> source = cast(convert(getPublisher(injectionPoint), converters, payloadType));
         Type injectedKeyType = getRawTypeIfParameterized(keyType);
         Type injectedPayloadType = getRawTypeIfParameterized(payloadType);
-        return new DefaultTable<>(source, extractKeyValueFunction(keyExtractors, injectedKeyType, injectedPayloadType));
+        return new DefaultTableView<>(source, extractKeyValueFunction(keyExtractors, injectedKeyType, injectedPayloadType));
     }
 
     /**

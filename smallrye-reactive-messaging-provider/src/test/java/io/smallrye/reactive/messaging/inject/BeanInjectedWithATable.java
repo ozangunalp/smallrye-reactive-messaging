@@ -8,7 +8,7 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 
 import io.smallrye.reactive.messaging.MutinyEmitter;
-import io.smallrye.reactive.messaging.Table;
+import io.smallrye.reactive.messaging.TableView;
 
 @ApplicationScoped
 public class BeanInjectedWithATable {
@@ -19,17 +19,17 @@ public class BeanInjectedWithATable {
 
     @Inject
     @Channel("hello")
-    private Table<String, String> hello;
+    private TableView<String, String> hello;
 
     @Inject
     @Channel("bonjour")
-    private Table<String, String> bonjour;
+    private TableView<String, String> bonjour;
 
     public Map<String, String> getMapBonjour() {
-        return bonjour.toMap();
+        return bonjour.fetchAll();
     }
 
-    public Table<String, String> getHello() {
+    public TableView<String, String> getHello() {
         return hello;
     }
 
@@ -37,7 +37,7 @@ public class BeanInjectedWithATable {
         return helloEmitter;
     }
 
-    public Table<String, String> getBonjour() {
+    public TableView<String, String> getBonjour() {
         return bonjour;
     }
 }
