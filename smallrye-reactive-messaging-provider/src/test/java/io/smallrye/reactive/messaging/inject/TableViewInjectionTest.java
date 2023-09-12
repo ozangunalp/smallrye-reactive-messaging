@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import io.smallrye.reactive.messaging.MutinyEmitter;
@@ -140,8 +139,8 @@ public class TableViewInjectionTest extends WeldTestBaseWithoutTails {
         await().untilAsserted(() -> {
             TableView<String, String> bonjour = bean.getBonjour();
             assertThat(bonjour.fetchAll())
-                            .containsKey(null)
-                            .containsValue("R");
+                    .containsKey(null)
+                    .containsValue("R");
             assertThat(bonjour.keys());
         });
         MutinyEmitter<String> emitter = bean.getHelloEmitter();
@@ -153,8 +152,8 @@ public class TableViewInjectionTest extends WeldTestBaseWithoutTails {
         await().untilAsserted(() -> {
             TableView<String, String> hello = bean.getHello();
             assertThat(hello.fetchAll())
-                            .containsKey(null)
-                            .containsValue("o");
+                    .containsKey(null)
+                    .containsValue("o");
             assertThat(hello.keys()).containsOnlyNulls();
         });
     }

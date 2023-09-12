@@ -45,11 +45,11 @@ public class DefaultTableView<K, V> extends AbstractMulti<Tuple2<K, V>> implemen
     }
 
     public DefaultTableView(Multi<? extends Message<V>> upstream,
-                            Function<Message<V>, Tuple2<K, V>> tupleExtractor,
-                            boolean emitOnChange) {
+            Function<Message<V>, Tuple2<K, V>> tupleExtractor,
+            boolean emitOnChange) {
         this(ParameterValidation.nonNull(upstream, "upstream")
-                        .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.ack()).map(x -> m))
-                        .onItem().transform(tupleExtractor),
+                .onItem().transformToUniAndConcatenate(m -> Uni.createFrom().completionStage(m.ack()).map(x -> m))
+                .onItem().transform(tupleExtractor),
                 emitOnChange,
                 true);
     }

@@ -17,10 +17,10 @@ import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.junit.jupiter.api.Test;
 
 import io.smallrye.reactive.messaging.TableView;
-import io.smallrye.reactive.messaging.kafka.ConsumerRecordKeyValueExtractor;
 import io.smallrye.reactive.messaging.kafka.base.KafkaCompanionTestBase;
 import io.smallrye.reactive.messaging.kafka.base.KafkaMapBasedConfig;
 import io.smallrye.reactive.messaging.kafka.converters.ConsumerRecordConverter;
+import io.smallrye.reactive.messaging.kafka.converters.KeyValueFromKafkaRecordExtractor;
 
 public class KafkaTableViewTest extends KafkaCompanionTestBase {
 
@@ -35,7 +35,7 @@ public class KafkaTableViewTest extends KafkaCompanionTestBase {
         builder.put("topic", topic + "-table");
         builder.put("auto.offset.reset", "earliest");
 
-        addBeans(ConsumerRecordKeyValueExtractor.class, ConsumerRecordConverter.class);
+        addBeans(KeyValueFromKafkaRecordExtractor.class, ConsumerRecordConverter.class);
         MyBean bean = runApplication(builder, MyBean.class);
 
         companion.produceStrings().fromRecords(

@@ -7,10 +7,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.reactive.messaging.Message;
 
 import io.smallrye.mutiny.tuples.Tuple2;
-import io.smallrye.reactive.messaging.MessageKeyValueExtractor;
+import io.smallrye.reactive.messaging.keyed.KeyValueExtractor;
 
 @ApplicationScoped
-public class TupleKeyValueExtractor implements MessageKeyValueExtractor {
+public class TupleKeyValueExtractor implements KeyValueExtractor {
 
     @Override
     public boolean canExtract(Message<?> in, Type keyType, Type valueType) {

@@ -1,7 +1,7 @@
 package io.smallrye.reactive.messaging.providers.extension;
 
 import static io.smallrye.reactive.messaging.providers.helpers.ConverterUtils.convert;
-import static io.smallrye.reactive.messaging.providers.helpers.KeyExtractorUtils.extractKeyValueFunction;
+import static io.smallrye.reactive.messaging.providers.helpers.KeyMultiUtils.extractKeyValueFunction;
 import static io.smallrye.reactive.messaging.providers.i18n.ProviderExceptions.ex;
 
 import java.lang.annotation.Annotation;
@@ -28,6 +28,7 @@ import org.reactivestreams.Publisher;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.*;
+import io.smallrye.reactive.messaging.keyed.KeyValueExtractor;
 import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
 import io.smallrye.reactive.messaging.providers.helpers.TypeUtils;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderExceptions;
@@ -50,7 +51,7 @@ public class ChannelProducer {
 
     @Inject
     // @Any would only be needed if we wanted to allow implementations with qualifiers
-    Instance<MessageKeyValueExtractor> keyExtractors;
+    Instance<KeyValueExtractor> keyExtractors;
 
     @Produces
     @Typed({ TableView.class })

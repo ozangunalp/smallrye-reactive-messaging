@@ -6,10 +6,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 import org.eclipse.microprofile.reactive.messaging.Message;
 
-import io.smallrye.reactive.messaging.MessageKeyValueExtractor;
+import io.smallrye.reactive.messaging.keyed.KeyValueExtractor;
 
 @ApplicationScoped
-public class PayloadKeyValueExtractor implements MessageKeyValueExtractor {
+public class PayloadKeyValueExtractor implements KeyValueExtractor {
 
     @Override
     public boolean canExtract(Message<?> in, Type keyType, Type valueType) {

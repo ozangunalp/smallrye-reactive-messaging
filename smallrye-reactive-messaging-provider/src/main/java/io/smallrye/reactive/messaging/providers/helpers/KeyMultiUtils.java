@@ -1,8 +1,11 @@
 package io.smallrye.reactive.messaging.providers.helpers;
 
+import static io.smallrye.reactive.messaging.providers.helpers.CDIUtils.getSortedInstances;
+
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 import jakarta.enterprise.inject.Instance;
 
@@ -10,6 +13,7 @@ import org.eclipse.microprofile.reactive.messaging.Message;
 
 import io.smallrye.mutiny.GroupedMulti;
 import io.smallrye.mutiny.Multi;
+import io.smallrye.mutiny.tuples.Tuple2;
 import io.smallrye.reactive.messaging.MediatorConfiguration;
 import io.smallrye.reactive.messaging.keyed.KeyValueExtractor;
 import io.smallrye.reactive.messaging.keyed.KeyedMulti;
@@ -19,6 +23,42 @@ public class KeyMultiUtils {
 
     private KeyMultiUtils() {
         // Avoid direct instantiation.
+    }
+
+    public static <K, V> Function<Message<V>, Tuple2<K, V>> extractKeyValueFunction(
+            Instance<KeyValueExtractor> keyExtractors,
+            Type injectedTableKeyType, Type injectedTableValueType) {
+        return new Function<>() {
+
+            KeyValueExtractor actual;
+
+            @Override
+            public Tuple2<K, V> apply(Message<V> o) {
+                //noinspection ConstantConditions - it can be `null`
+                if (injectedTableKeyType == null || injectedTableValueType == null) {
+                    return null;
+                }
+
+                if (actual != null) {
+                    // Use the cached converter.
+                    K extractKey = (K) actual.extractKey(o, injectedTableKeyType);
+                    V extractValue = (V) actual.extractValue(o, injectedTableValueType);
+                    return Tuple2.of(extractKey, extractValue);
+                } else {
+                    // Lookup and cache
+                    for (KeyValueExtractor ext : getSortedInstances(keyExtractors)) {
+                        if (ext.canExtract(o, injectedTableKeyType, injectedTableValueType)) {
+                            actual = ext;
+                            K extractKey = (K) actual.extractKey(o, injectedTableKeyType);
+                            V extractValue = (V) actual.extractValue(o, injectedTableValueType);
+                            return Tuple2.of(extractKey, extractValue);
+                        }
+                    }
+                    // No key extractor found
+                    return Tuple2.of(null, o.getPayload());
+                }
+            }
+        };
     }
 
     public static Multi<KeyedMulti<?, ?>> convertToKeyedMulti(Multi<? extends Message<?>> multi,
