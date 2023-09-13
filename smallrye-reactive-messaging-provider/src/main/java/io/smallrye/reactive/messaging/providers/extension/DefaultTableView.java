@@ -40,17 +40,10 @@ public class DefaultTableView<K, V> extends AbstractMulti<Tuple2<K, V>> implemen
     public DefaultTableView(Multi<? extends Tuple2<K, V>> upstream, boolean emitOnChange, boolean subscribeOnCreation) {
         this.data = new ConcurrentHashMap<>();
         this.upstream = ParameterValidation.nonNull(upstream, "upstream")
-                .withContext((multi, context) -> {
-                    context.put("table_data", this.data);
-                    return multi;
-                })
-                .attachContext()
-                .onItem().transformToUniAndConcatenate(t -> {
-                    Tuple2<K, V> tuple = t.get();
-                    Map<K, V> tableData = t.context().get("table_data");
+                .onItem().transformToUniAndConcatenate(tuple -> {
                     K key = tuple.getItem1();
                     V value = tuple.getItem2();
-                    V previous = updateEntry(tableData, key, value);
+                    V previous = updateEntry(this.data, key, value);
                     if (emitOnChange && Objects.equals(previous, value)) {
                         return Uni.createFrom().nullItem();
                     }

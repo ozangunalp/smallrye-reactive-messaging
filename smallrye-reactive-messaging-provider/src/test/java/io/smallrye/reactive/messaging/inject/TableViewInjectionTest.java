@@ -162,10 +162,10 @@ public class TableViewInjectionTest extends WeldTestBaseWithoutTails {
     public void testKeyedAnnotationTable() {
         addBeanClass(SourceBean.class, BeanInjectedWithAKeyedTable.AppendingKeyExtractor.class);
         BeanInjectedWithAKeyedTable bean = installInitializeAndGet(BeanInjectedWithAKeyedTable.class);
-        TableView<String, String> vTable = bean.getHello();
+        TableView<String, String> hello = bean.getHello();
         TableView<String, String> bonjour = bean.getBonjour();
         List<String> values = new CopyOnWriteArrayList<>();
-        vTable.subscribe().with(t -> values.add(t.getItem1()));
+        hello.subscribe().with(t -> values.add(t.getItem1()));
         MutinyEmitter<String> emitter = bean.getHelloEmitter();
         emitter.send("h").await().indefinitely();
         emitter.send("e").await().indefinitely();
@@ -173,7 +173,7 @@ public class TableViewInjectionTest extends WeldTestBaseWithoutTails {
         emitter.send("l").await().indefinitely();
         emitter.send("o").await().indefinitely();
         await().untilAsserted(() -> assertThat(values).containsOnly("k-h", "k-e", "k-l", "k-l", "k-o"));
-        await().untilAsserted(() -> assertThat(vTable.fetchAll()).containsOnlyKeys("k-h", "k-e", "k-l", "k-o"));
+        await().untilAsserted(() -> assertThat(hello.fetchAll()).containsOnlyKeys("k-h", "k-e", "k-l", "k-o"));
         await().untilAsserted(() -> assertThat(bonjour.values()).containsOnly("B", "O", "N", "J", "U", "R"));
         await().untilAsserted(() -> assertThat(bonjour.keys()).containsOnly("k-B", "k-R", "k-U", "k-J", "k-O", "k-N"));
     }
