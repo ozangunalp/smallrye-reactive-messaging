@@ -19,7 +19,7 @@ public interface AwsSqsLogging extends BasicLogger {
     @Message(id = 19300, value = "Received Aws Sqs message %s")
     void receivedMessage(String message);
 
-    @LogMessage(level = Level.WARN)
+    @LogMessage(level = Level.TRACE)
     @Message(id = 19301, value = "Aws Sqs message is null")
     void receivedEmptyMessage();
 
