@@ -9,6 +9,6 @@ public class SqsNothingAckHandler implements SqsAckHandler {
     @Override
     public Uni<Void> handle(SqsMessage message) {
         return Uni.createFrom().voidItem()
-                .runSubscriptionOn(message::runOnMessageContext);
+                .emitOn(message::runOnMessageContext);
     }
 }

@@ -26,11 +26,9 @@ public class SqsManager {
 
     private final Map<SqsClientConfig, String> queueUrls = new ConcurrentHashMap<>();
 
-
     public void terminate(
             @Observes(notifyObserver = Reception.IF_EXISTS) @Priority(50) @BeforeDestroyed(ApplicationScoped.class) Object event) {
         clients.values().forEach(SqsClient::close);
-        System.out.println("Closed clients");
     }
 
     private SqsClient getClient(SqsClientConfig config) {

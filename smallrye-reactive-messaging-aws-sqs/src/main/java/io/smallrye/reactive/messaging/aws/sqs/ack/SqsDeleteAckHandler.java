@@ -12,12 +12,12 @@ public class SqsDeleteAckHandler implements SqsAckHandler {
 
     private final SqsClient client;
     private final String queueUrl;
-    private final Executor receiveWorker;
+    private final Executor deleteWorkerThread;
 
-    public SqsDeleteAckHandler(SqsClient client, String queueUrl, Executor receiveWorker) {
+    public SqsDeleteAckHandler(SqsClient client, String queueUrl, Executor deleteWorkerThread) {
         this.client = client;
         this.queueUrl = queueUrl;
-        this.receiveWorker = receiveWorker;
+        this.deleteWorkerThread = deleteWorkerThread;
     }
 
     @Override
@@ -27,7 +27,7 @@ public class SqsDeleteAckHandler implements SqsAckHandler {
                 .receiptHandle(message.getMessage().receiptHandle())
                 .build();
         return Uni.createFrom().item(() -> client.deleteMessage(build))
-                .runSubscriptionOn(receiveWorker)
+                .runSubscriptionOn(deleteWorkerThread)
                 .replaceWithVoid()
                 .emitOn(message::runOnMessageContext);
     }
