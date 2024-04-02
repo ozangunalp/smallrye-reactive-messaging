@@ -15,6 +15,7 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 
 import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.utils.SdkAutoCloseable;
 
 @ApplicationScoped
 public class SqsManager {
@@ -28,7 +29,10 @@ public class SqsManager {
 
     public void terminate(
             @Observes(notifyObserver = Reception.IF_EXISTS) @Priority(50) @BeforeDestroyed(ApplicationScoped.class) Object event) {
-        clients.values().forEach(SqsClient::close);
+        clients.entrySet().stream()
+                .filter(e -> e.getKey().isComplete() && e.getValue() != null)
+                .map(Map.Entry::getValue)
+                .forEach(SdkAutoCloseable::close);
     }
 
     private SqsClient getClient(SqsClientConfig config) {
