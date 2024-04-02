@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -22,7 +23,7 @@ import org.testcontainers.utility.DockerImageName;
 import io.smallrye.config.SmallRyeConfigProviderResolver;
 import software.amazon.awssdk.auth.credentials.SystemPropertyCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.SqsAsyncClient;
 import software.amazon.awssdk.services.sqs.model.CreateQueueRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
@@ -36,7 +37,7 @@ public class SqsTestBase extends WeldTestBase {
     public LocalStackContainer localstack = new LocalStackContainer(localstackImage)
             .withServices(LocalStackContainer.Service.SQS);
 
-    private SqsClient client;
+    private SqsAsyncClient client;
 
     protected String queue;
 
@@ -74,7 +75,11 @@ public class SqsTestBase extends WeldTestBase {
         var sqsClient = getSqsClient();
         for (int i = 0; i < numberOfMessages; i++) {
             int j = i;
-            sqsClient.sendMessage(r -> messageProvider.accept(j, r.queueUrl(queueUrl)));
+            try {
+                sqsClient.sendMessage(r -> messageProvider.accept(j, r.queueUrl(queueUrl))).get();
+            } catch (InterruptedException | ExecutionException e) {
+                throw new RuntimeException(e);
+            }
         }
         return queueUrl;
     }
@@ -83,9 +88,9 @@ public class SqsTestBase extends WeldTestBase {
         return sendMessage(queueUrl, numberOfMessages, (i, b) -> b.messageBody("hello"));
     }
 
-    public synchronized SqsClient getSqsClient() {
+    public synchronized SqsAsyncClient getSqsClient() {
         if (client == null) {
-            client = SqsClient.builder().endpointOverride(localstack.getEndpoint())
+            client = SqsAsyncClient.builder().endpointOverride(localstack.getEndpoint())
                     .credentialsProvider(SystemPropertyCredentialsProvider.create())
                     .region(Region.of(localstack.getRegion()))
                     .build();
@@ -99,9 +104,14 @@ public class SqsTestBase extends WeldTestBase {
         var sqsClient = getSqsClient();
         var received = new CopyOnWriteArrayList<Message>();
         while (!stopCondition.test(received)) {
-            received.addAll(
-                    sqsClient.receiveMessage(r -> receiveMessageRequest.accept(r.queueUrl(queueUrl).maxNumberOfMessages(10)))
-                            .messages());
+            try {
+                received.addAll(sqsClient
+                        .receiveMessage(r -> receiveMessageRequest.accept(r.queueUrl(queueUrl).maxNumberOfMessages(10)))
+                        .get()
+                        .messages());
+            } catch (ExecutionException | InterruptedException e) {
+                throw new RuntimeException(e);
+            }
         }
         return received;
     }
@@ -124,10 +134,18 @@ public class SqsTestBase extends WeldTestBase {
     }
 
     public String createQueue(String queueName) {
-        return getSqsClient().createQueue(r -> r.queueName(queueName)).queueUrl();
+        try {
+            return getSqsClient().createQueue(r -> r.queueName(queueName)).get().queueUrl();
+        } catch (ExecutionException | InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public String createQueue(String queueName, Consumer<CreateQueueRequest.Builder> requestConsumer) {
-        return getSqsClient().createQueue(r -> requestConsumer.accept(r.queueName(queueName))).queueUrl();
+        try {
+            return getSqsClient().createQueue(r -> requestConsumer.accept(r.queueName(queueName))).get().queueUrl();
+        } catch (ExecutionException | InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

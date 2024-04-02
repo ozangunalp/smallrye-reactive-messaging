@@ -3,15 +3,15 @@ package io.smallrye.reactive.messaging.aws.sqs;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 
-import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.SqsAsyncClient;
 
 @ApplicationScoped
 public class SqsClientProvider {
 
-    public static SqsClient client;
+    public static SqsAsyncClient client;
 
     @Produces
-    public SqsClient createClient() {
+    public SqsAsyncClient createClient() {
         return client;
     }
 

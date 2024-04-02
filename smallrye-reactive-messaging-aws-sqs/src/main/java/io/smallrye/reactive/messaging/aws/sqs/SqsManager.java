@@ -1,6 +1,7 @@
 package io.smallrye.reactive.messaging.aws.sqs;
 
 import static io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsExceptions.ex;
+import static io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsLogging.log;
 
 import java.net.URI;
 import java.util.Map;
@@ -14,16 +15,18 @@ import jakarta.enterprise.event.Reception;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 
-import software.amazon.awssdk.services.sqs.SqsClient;
+import io.smallrye.mutiny.Uni;
+import software.amazon.awssdk.services.sqs.SqsAsyncClient;
+import software.amazon.awssdk.services.sqs.model.GetQueueUrlResponse;
 import software.amazon.awssdk.utils.SdkAutoCloseable;
 
 @ApplicationScoped
 public class SqsManager {
 
     @Inject
-    Instance<SqsClient> clientInstance;
+    Instance<SqsAsyncClient> clientInstance;
 
-    private final Map<SqsClientConfig, SqsClient> clients = new ConcurrentHashMap<>();
+    private final Map<SqsClientConfig, SqsAsyncClient> clients = new ConcurrentHashMap<>();
 
     private final Map<SqsClientConfig, String> queueUrls = new ConcurrentHashMap<>();
 
@@ -35,12 +38,12 @@ public class SqsManager {
                 .forEach(SdkAutoCloseable::close);
     }
 
-    private SqsClient getClient(SqsClientConfig config) {
+    private SqsAsyncClient getClient(SqsClientConfig config) {
         return clients.computeIfAbsent(config, c -> {
             if (clientInstance.isResolvable() && !c.isComplete()) {
                 return clientInstance.get();
             }
-            var builder = SqsClient.builder();
+            var builder = SqsAsyncClient.builder();
             if (c.getEndpointOverride() != null) {
                 builder.endpointOverride(URI.create(c.getEndpointOverride()));
             }
@@ -53,18 +56,22 @@ public class SqsManager {
 
     }
 
-    public SqsClient getClient(SqsConnectorCommonConfiguration config) {
+    public SqsAsyncClient getClient(SqsConnectorCommonConfiguration config) {
         return getClient(new SqsClientConfig(config));
     }
 
-    public String getQueueUrl(SqsConnectorCommonConfiguration config) {
+    public Uni<String> getQueueUrl(SqsConnectorCommonConfiguration config) {
         SqsClientConfig clientConfig = new SqsClientConfig(config);
-        return queueUrls.computeIfAbsent(clientConfig, c -> {
-            try {
-                return getClient(clientConfig).getQueueUrl(r -> r.queueName(c.getQueueName()).build()).queueUrl();
-            } catch (RuntimeException e) {
-                throw ex.illegalStateUnableToRetrieveQueueUrl(e);
-            }
-        });
+        if (queueUrls.containsKey(clientConfig)) {
+            return Uni.createFrom().item(queueUrls.get(clientConfig));
+        } else {
+            return Uni.createFrom().completionStage(() -> getClient(clientConfig)
+                    .getQueueUrl(r -> r.queueName(clientConfig.getQueueName()).build()))
+                    .map(GetQueueUrlResponse::queueUrl)
+                    .invoke(queueUrl -> queueUrls.put(clientConfig, queueUrl))
+                    .invoke(queueUrl -> log.queueUrlForChannel(config.getChannel(), queueUrl))
+                    .onFailure().transform(ex::illegalStateUnableToRetrieveQueueUrl);
+        }
     }
+
 }

@@ -1,33 +1,28 @@
 package io.smallrye.reactive.messaging.aws.sqs.ack;
 
-import java.util.concurrent.Executor;
-
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.aws.sqs.SqsAckHandler;
 import io.smallrye.reactive.messaging.aws.sqs.SqsMessage;
-import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.SqsAsyncClient;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 
 public class SqsDeleteAckHandler implements SqsAckHandler {
 
-    private final SqsClient client;
-    private final String queueUrl;
-    private final Executor deleteWorkerThread;
+    private final SqsAsyncClient client;
+    private final Uni<String> queueUrlUni;
 
-    public SqsDeleteAckHandler(SqsClient client, String queueUrl, Executor deleteWorkerThread) {
+    public SqsDeleteAckHandler(SqsAsyncClient client, Uni<String> queueUrlUni) {
         this.client = client;
-        this.queueUrl = queueUrl;
-        this.deleteWorkerThread = deleteWorkerThread;
+        this.queueUrlUni = queueUrlUni;
     }
 
     @Override
     public Uni<Void> handle(SqsMessage message) {
-        DeleteMessageRequest build = DeleteMessageRequest.builder()
+        return queueUrlUni.map(queueUrl -> DeleteMessageRequest.builder()
                 .queueUrl(queueUrl)
                 .receiptHandle(message.getMessage().receiptHandle())
-                .build();
-        return Uni.createFrom().item(() -> client.deleteMessage(build))
-                .runSubscriptionOn(deleteWorkerThread)
+                .build())
+                .chain(request -> Uni.createFrom().completionStage(() -> client.deleteMessage(request)))
                 .replaceWithVoid()
                 .emitOn(message::runOnMessageContext);
     }

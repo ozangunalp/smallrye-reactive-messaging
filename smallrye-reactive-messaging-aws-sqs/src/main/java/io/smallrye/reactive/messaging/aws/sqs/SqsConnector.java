@@ -72,7 +72,7 @@ public class SqsConnector implements InboundConnector, OutboundConnector {
         var conf = new SqsConnectorIncomingConfiguration(config);
         var customizer = CDIUtils.getInstanceById(customizers, conf.getReceiveRequestCustomizer().orElse(conf.getChannel()),
                 () -> null);
-        var channel = new SqsInboundChannel(conf, vertx, sqsManager.getClient(conf), sqsManager.getQueueUrl(conf), customizer);
+        var channel = new SqsInboundChannel(conf, vertx, sqsManager, customizer);
         INBOUND_CHANNELS.add(channel);
         return channel.getStream();
     }
@@ -80,7 +80,7 @@ public class SqsConnector implements InboundConnector, OutboundConnector {
     @Override
     public Subscriber<? extends Message<?>> getSubscriber(Config config) {
         var conf = new SqsConnectorOutgoingConfiguration(config);
-        var channel = new SqsOutboundChannel(conf, sqsManager.getClient(conf), sqsManager.getQueueUrl(conf));
+        var channel = new SqsOutboundChannel(conf, sqsManager);
         OUTBOUND_CHANNELS.add(channel);
         return channel.getSubscriber();
     }

@@ -35,4 +35,11 @@ public interface AwsSqsLogging extends BasicLogger {
     @Message(id = 19304, value = "Failed to parse provided AWS Region, will apply the AWS SDK built-in logic to detect region. %s, %s")
     void failedToParseAwsRegion(String region, String message);
 
+    @LogMessage(level = Level.INFO)
+    @Message(id = 19305, value = "Queue URL for channel %s : %s")
+    void queueUrlForChannel(String channel, String queueUrl);
+
+    @LogMessage(level = Level.DEBUG)
+    @Message(id = 19306, value = "Message sent for channel %s with message id %s and sequence number %s")
+    void messageSentToChannel(String channel, String messageId, String sequence);
 }
