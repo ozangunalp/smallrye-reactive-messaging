@@ -16,4 +16,7 @@ public interface AwsSqsExceptions {
 
     @Message(id = 19400, value = "Failed to retrieve AWS Sqs queue url")
     IllegalStateException illegalStateUnableToRetrieveQueueUrl(@Cause Throwable t);
+
+    @Message(id = 19401, value = "Unable to load the class %s")
+    IllegalStateException illegalStateUnableToLoadClass(String className, @Cause Throwable t);
 }

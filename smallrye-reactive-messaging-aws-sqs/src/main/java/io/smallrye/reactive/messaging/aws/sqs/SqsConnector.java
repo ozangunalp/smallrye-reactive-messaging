@@ -22,6 +22,7 @@ import org.eclipse.microprofile.reactive.messaging.spi.Connector;
 import io.smallrye.reactive.messaging.annotations.ConnectorAttribute;
 import io.smallrye.reactive.messaging.connector.InboundConnector;
 import io.smallrye.reactive.messaging.connector.OutboundConnector;
+import io.smallrye.reactive.messaging.json.JsonMapping;
 import io.smallrye.reactive.messaging.providers.connectors.ExecutionHolder;
 import io.smallrye.reactive.messaging.providers.helpers.CDIUtils;
 import io.vertx.mutiny.core.Vertx;
@@ -50,15 +51,21 @@ public class SqsConnector implements InboundConnector, OutboundConnector {
     @Any
     Instance<SqsReceiveMessageRequestCustomizer> customizers;
 
+    @Inject
+    Instance<JsonMapping> jsonMappers;
+
     Vertx vertx;
 
     private static final List<SqsInboundChannel> INBOUND_CHANNELS = new CopyOnWriteArrayList<>();
     private static final List<SqsOutboundChannel> OUTBOUND_CHANNELS = new CopyOnWriteArrayList<>();
     public static final String CONNECTOR_NAME = "smallrye-sqs";
+    public static final String CLASS_NAME_ATTRIBUTE = "_classname";
+    private JsonMapping jsonMapping;
 
     @PostConstruct
     void init() {
         this.vertx = executionHolder.vertx();
+        this.jsonMapping = jsonMappers.isUnsatisfied() ? null : jsonMappers.get();
     }
 
     public void terminate(
@@ -72,7 +79,7 @@ public class SqsConnector implements InboundConnector, OutboundConnector {
         var conf = new SqsConnectorIncomingConfiguration(config);
         var customizer = CDIUtils.getInstanceById(customizers, conf.getReceiveRequestCustomizer().orElse(conf.getChannel()),
                 () -> null);
-        var channel = new SqsInboundChannel(conf, vertx, sqsManager, customizer);
+        var channel = new SqsInboundChannel(conf, vertx, sqsManager, customizer, jsonMapping);
         INBOUND_CHANNELS.add(channel);
         return channel.getStream();
     }
@@ -80,7 +87,7 @@ public class SqsConnector implements InboundConnector, OutboundConnector {
     @Override
     public Subscriber<? extends Message<?>> getSubscriber(Config config) {
         var conf = new SqsConnectorOutgoingConfiguration(config);
-        var channel = new SqsOutboundChannel(conf, sqsManager);
+        var channel = new SqsOutboundChannel(conf, sqsManager, jsonMapping);
         OUTBOUND_CHANNELS.add(channel);
         return channel.getSubscriber();
     }

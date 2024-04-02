@@ -14,6 +14,7 @@ import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.aws.sqs.ack.SqsDeleteAckHandler;
 import io.smallrye.reactive.messaging.aws.sqs.ack.SqsNothingAckHandler;
+import io.smallrye.reactive.messaging.json.JsonMapping;
 import io.smallrye.reactive.messaging.providers.helpers.PausablePollingStream;
 import io.vertx.core.impl.VertxInternal;
 import io.vertx.mutiny.core.Context;
@@ -37,7 +38,7 @@ public class SqsInboundChannel {
     private final long retries;
 
     public SqsInboundChannel(SqsConnectorIncomingConfiguration conf, Vertx vertx, SqsManager sqsManager,
-            SqsReceiveMessageRequestCustomizer customizer) {
+            SqsReceiveMessageRequestCustomizer customizer, JsonMapping jsonMapper) {
         this.channel = conf.getChannel();
         this.retries = conf.getReceiveRequestRetries();
         this.client = sqsManager.getClient(conf);
@@ -62,13 +63,14 @@ public class SqsInboundChannel {
         this.stream = Multi.createFrom()
                 .deferred(() -> queueUrlUni.onItem().transformToMulti(queueUrl -> pollingStream.getStream()))
                 .emitOn(r -> context.runOnContext(r))
-                .onItem().transform(message -> new SqsMessage(message, ackHandler));
+                .onItem().transform(message -> new SqsMessage<>(message, jsonMapper, ackHandler));
     }
 
     public Uni<List<software.amazon.awssdk.services.sqs.model.Message>> request(String requestId, int retryCount) {
         return queueUrlUni.map(queueUrl -> {
             var builder = ReceiveMessageRequest.builder()
                     .queueUrl(queueUrl)
+                    .messageAttributeNames(SqsConnector.CLASS_NAME_ATTRIBUTE)
                     .waitTimeSeconds(waitTimeSeconds)
                     .maxNumberOfMessages(maxNumberOfMessages);
             if (requestId != null) {

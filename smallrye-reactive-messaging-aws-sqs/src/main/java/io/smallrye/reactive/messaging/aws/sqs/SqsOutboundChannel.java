@@ -11,8 +11,8 @@ import org.eclipse.microprofile.reactive.messaging.Message;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.OutgoingMessageMetadata;
 import io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsLogging;
+import io.smallrye.reactive.messaging.json.JsonMapping;
 import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
-
 import software.amazon.awssdk.services.sqs.SqsAsyncClient;
 import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
@@ -25,11 +25,13 @@ public class SqsOutboundChannel {
 
     private final Uni<String> queueUrlUni;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final JsonMapping jsonMapping;
 
-    public SqsOutboundChannel(SqsConnectorOutgoingConfiguration conf, SqsManager sqsManager) {
+    public SqsOutboundChannel(SqsConnectorOutgoingConfiguration conf, SqsManager sqsManager, JsonMapping jsonMapping) {
         this.channel = conf.getChannel();
         this.client = sqsManager.getClient(conf);
         this.queueUrlUni = sqsManager.getQueueUrl(conf).memoize().indefinitely();
+        this.jsonMapping = jsonMapping;
         this.subscriber = MultiUtils.via(multi -> multi
                 .onSubscription().call(s -> queueUrlUni)
                 .call(m -> publishMessage(this.client, m)));
@@ -102,11 +104,38 @@ public class SqsOutboundChannel {
                     .messageBody(msg.body())
                     .build();
         }
+        String messageBody = outgoingPayloadClassName(payload, msgAttributes);
         return builder
                 .queueUrl(queueUrl)
                 .messageAttributes(msgAttributes)
-                .messageBody(String.valueOf(payload))
+                .messageBody(messageBody)
                 .build();
+    }
+
+    private String outgoingPayloadClassName(Object payload, Map<String, MessageAttributeValue> messageAttributes) {
+        if (payload instanceof String || payload.getClass().isPrimitive() || isPrimitiveBoxed(payload.getClass())) {
+            messageAttributes.put(SqsConnector.CLASS_NAME_ATTRIBUTE, MessageAttributeValue.builder().dataType("String")
+                    .stringValue(payload.getClass().getName()).build());
+            return String.valueOf(payload);
+        } else if (payload.getClass().isArray() && payload.getClass().getComponentType().equals(Byte.TYPE)) {
+            return String.valueOf(payload);
+        } else if (jsonMapping != null) {
+            messageAttributes.put(SqsConnector.CLASS_NAME_ATTRIBUTE, MessageAttributeValue.builder().dataType("String")
+                    .stringValue(payload.getClass().getName()).build());
+            return jsonMapping.toJson(payload);
+        }
+        return String.valueOf(payload);
+    }
+
+    private boolean isPrimitiveBoxed(Class<?> c) {
+        return c.equals(Boolean.class)
+                || c.equals(Integer.class)
+                || c.equals(Byte.class)
+                || c.equals(Double.class)
+                || c.equals(Float.class)
+                || c.equals(Short.class)
+                || c.equals(Character.class)
+                || c.equals(Long.class);
     }
 
     public void close() {
