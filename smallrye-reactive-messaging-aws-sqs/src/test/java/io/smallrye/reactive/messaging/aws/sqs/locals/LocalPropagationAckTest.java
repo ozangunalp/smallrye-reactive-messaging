@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.aws.sqs.SqsClientProvider;
 import io.smallrye.reactive.messaging.aws.sqs.SqsConnector;
 import io.smallrye.reactive.messaging.aws.sqs.SqsTestBase;
 import io.smallrye.reactive.messaging.providers.locals.LocalContextMetadata;
@@ -28,17 +29,19 @@ public class LocalPropagationAckTest extends SqsTestBase {
     private MapBasedConfig dataconfig() {
         return new MapBasedConfig()
                 .with("mp.messaging.incoming.data.connector", SqsConnector.CONNECTOR_NAME)
-                .with("mp.messaging.incoming.data.endpointOverride", localstack.getEndpoint().toString())
-                .with("mp.messaging.incoming.data.region", localstack.getRegion());
+                .with("mp.messaging.incoming.data.queue", queue);
     }
 
     @BeforeEach
     void setUp() {
-        sendMessage(createQueue("data"), 5, (i, b) -> b.messageBody(String.valueOf(i + 1)));
+        System.out.println(queue);
+        sendMessage(createQueue(queue), 5, (i, b) -> b.messageBody(String.valueOf(i + 1)));
     }
 
     @Test
     public void testChannelWithAckOnMessageContext() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         IncomingChannelWithAckOnMessageContext bean = runApplication(dataconfig(),
                 IncomingChannelWithAckOnMessageContext.class);
         bean.process(i -> i + 1);
@@ -48,6 +51,8 @@ public class LocalPropagationAckTest extends SqsTestBase {
 
     @Test
     public void testChannelWithAckOnMessageContextNothingAck() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         IncomingChannelWithAckOnMessageContext bean = runApplication(dataconfig()
                 .with("mp.messaging.incoming.data.ack.delete", false),
                 IncomingChannelWithAckOnMessageContext.class);

@@ -13,6 +13,7 @@ import jakarta.enterprise.context.BeforeDestroyed;
 import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.event.Reception;
 import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.inject.Inject;
 
 import io.smallrye.mutiny.Uni;
@@ -43,15 +44,19 @@ public class SqsManager {
             if (clientInstance.isResolvable() && !c.isComplete()) {
                 return clientInstance.get();
             }
-            var builder = SqsAsyncClient.builder();
-            if (c.getEndpointOverride() != null) {
-                builder.endpointOverride(URI.create(c.getEndpointOverride()));
+            try {
+                var builder = SqsAsyncClient.builder();
+                if (c.getEndpointOverride() != null) {
+                    builder.endpointOverride(URI.create(c.getEndpointOverride()));
+                }
+                if (c.getRegion() != null) {
+                    builder.region(c.getRegion());
+                }
+                builder.credentialsProvider(config.createCredentialsProvider());
+                return builder.build();
+            } catch (Exception e) {
+                throw new DeploymentException("The required configuration property \"region\" is missing", e);
             }
-            if (c.getRegion() != null) {
-                builder.region(c.getRegion());
-            }
-            builder.credentialsProvider(config.createCredentialsProvider());
-            return builder.build();
         });
 
     }

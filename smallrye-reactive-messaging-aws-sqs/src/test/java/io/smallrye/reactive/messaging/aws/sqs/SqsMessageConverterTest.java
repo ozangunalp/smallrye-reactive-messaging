@@ -17,15 +17,13 @@ public class SqsMessageConverterTest extends SqsTestBase {
 
     @Test
     void testConsumerWithConverter() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         int expected = 10;
         sendMessage(createQueue(queue), expected);
         MapBasedConfig config = new MapBasedConfig()
                 .with("mp.messaging.incoming.data.connector", SqsConnector.CONNECTOR_NAME)
-                .with("mp.messaging.incoming.data.queue", queue)
-                .with("mp.messaging.incoming.data.endpointOverride", localstack.getEndpoint().toString())
-                .with("mp.messaging.incoming.data.region", localstack.getRegion())
-                .with("mp.messaging.incoming.data.credentialsProvider",
-                        "software.amazon.awssdk.auth.credentials.SystemPropertyCredentialsProvider");
+                .with("mp.messaging.incoming.data.queue", queue);
 
         ConsumerApp app = runApplication(config, ConsumerApp.class);
         await().until(() -> app.received().size() == expected);

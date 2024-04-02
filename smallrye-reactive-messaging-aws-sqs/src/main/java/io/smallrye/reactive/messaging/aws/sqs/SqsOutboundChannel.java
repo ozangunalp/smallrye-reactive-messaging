@@ -118,7 +118,7 @@ public class SqsOutboundChannel {
                     .stringValue(payload.getClass().getName()).build());
             return String.valueOf(payload);
         } else if (payload.getClass().isArray() && payload.getClass().getComponentType().equals(Byte.TYPE)) {
-            return String.valueOf(payload);
+            return new String((byte[]) payload);
         } else if (jsonMapping != null) {
             messageAttributes.put(SqsConnector.CLASS_NAME_ATTRIBUTE, MessageAttributeValue.builder().dataType("String")
                     .stringValue(payload.getClass().getName()).build());

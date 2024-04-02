@@ -21,9 +21,8 @@ public class SqsMessage<T> implements ContextAwareMessage<T>, MetadataInjectable
 
     private final Message message;
     private final SqsAckHandler ackHandler;
-    private Metadata metadata;
-
     private final T payload;
+    private Metadata metadata;
 
     public SqsMessage(Message message, JsonMapping jsonMapper, SqsAckHandler ackHandler) {
         this.message = message;

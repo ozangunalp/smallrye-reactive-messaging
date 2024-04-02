@@ -1,8 +1,9 @@
 package io.smallrye.reactive.messaging.aws.sqs;
 
+import static io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsLogging.log;
+
 import java.util.Objects;
 
-import io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsLogging;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -16,14 +17,7 @@ public class SqsClientConfig {
 
     public SqsClientConfig(SqsConnectorCommonConfiguration config) {
         this.queueName = config.getQueue().orElse(config.getChannel());
-        this.region = config.getRegion().map(s -> {
-            try {
-                return Region.of(s);
-            } catch (IllegalArgumentException e) {
-                AwsSqsLogging.log.failedToParseAwsRegion(s, e.getMessage());
-                return null;
-            }
-        }).orElse(null);
+        this.region = config.getRegion().map(Region::of).orElse(null);
         this.endpointOverride = config.getEndpointOverride().orElse(null);
         this.credentialsProviderClassName = config.getCredentialsProvider().orElse(null);
     }
@@ -77,7 +71,7 @@ public class SqsClientConfig {
             var method = clazz.getMethod("create");
             return (AwsCredentialsProvider) method.invoke(null);
         } catch (Exception e) {
-            AwsSqsLogging.log.failedToLoadAwsCredentialLoader(e.getMessage());
+            log.failedToLoadAwsCredentialsProvider(e.getMessage());
             return DefaultCredentialsProvider.create();
         }
     }

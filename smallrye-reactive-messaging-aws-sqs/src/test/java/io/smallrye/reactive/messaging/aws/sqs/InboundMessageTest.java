@@ -5,6 +5,7 @@ import static org.awaitility.Awaitility.await;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import jakarta.enterprise.context.ApplicationScoped;
@@ -63,6 +64,45 @@ public class InboundMessageTest extends SqsTestBase {
         }
 
         public List<Message> received() {
+            return received;
+        }
+    }
+
+    @Test
+    void testInboundMessageAck() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
+        addBeans(Customizer.class);
+        int expected = 10;
+        String queueUrl = createQueue(queue);
+        sendMessage(queueUrl, expected, (i, r) -> r.messageBody(String.valueOf(i))
+                .messageAttributes(Map.of("key", MessageAttributeValue.builder()
+                        .dataType("String").stringValue("value").build())));
+
+        MapBasedConfig config = new MapBasedConfig()
+                .with("mp.messaging.incoming.source.connector", SqsConnector.CONNECTOR_NAME)
+                .with("mp.messaging.incoming.source.queue", queue);
+
+        IncomingMessageAckApp app = runApplication(config, IncomingMessageAckApp.class);
+        await().until(() -> app.received().size() == expected);
+        assertThat(app.received()).hasSize(expected)
+                .allSatisfy(m -> assertThat(m.getMetadata(SqsIncomingMetadata.class)).isNotEmpty()
+                        .map(SqsIncomingMetadata::getMessage).isNotEmpty())
+                .extracting(m -> m.getPayload()).containsExactly("0", "1", "2", "3", "4", "5", "6", "7", "8", "9");
+    }
+
+    @ApplicationScoped
+    public static class IncomingMessageAckApp {
+
+        List<org.eclipse.microprofile.reactive.messaging.Message<String>> received = new CopyOnWriteArrayList<>();
+
+        @Incoming("source")
+        public CompletionStage<Void> process(org.eclipse.microprofile.reactive.messaging.Message<String> message) {
+            received.add(message);
+            return message.ack();
+        }
+
+        public List<org.eclipse.microprofile.reactive.messaging.Message<String>> received() {
             return received;
         }
     }

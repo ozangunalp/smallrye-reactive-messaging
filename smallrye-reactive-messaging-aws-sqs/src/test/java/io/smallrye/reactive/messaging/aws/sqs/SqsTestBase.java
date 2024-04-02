@@ -13,11 +13,13 @@ import java.util.function.Predicate;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.reactive.messaging.spi.ConnectorLiteral;
-import org.junit.Rule;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.containers.localstack.LocalStackContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import io.smallrye.config.SmallRyeConfigProviderResolver;
@@ -29,26 +31,25 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
+@Testcontainers
 public class SqsTestBase extends WeldTestBase {
 
-    DockerImageName localstackImage = DockerImageName.parse("localstack/localstack:3.1.0");
+    private final static DockerImageName localstackImage = DockerImageName.parse("localstack/localstack:3.1.0");
 
-    @Rule
-    public LocalStackContainer localstack = new LocalStackContainer(localstackImage)
+    @Container
+    public static LocalStackContainer localstack = new LocalStackContainer(localstackImage)
             .withServices(LocalStackContainer.Service.SQS);
 
-    private SqsAsyncClient client;
+    private static SqsAsyncClient client;
 
     protected String queue;
 
     @BeforeEach
     void setupLocalstack(TestInfo testInfo) {
-        localstack.start();
         System.setProperty("aws.accessKeyId", localstack.getAccessKey());
         System.setProperty("aws.secretAccessKey", localstack.getSecretKey());
-        String cn = testInfo.getTestClass().map(Class::getSimpleName).orElse(UUID.randomUUID().toString());
         String mn = testInfo.getTestMethod().map(Method::getName).orElse(UUID.randomUUID().toString());
-        queue = cn + "-" + mn + "-" + UUID.randomUUID().getMostSignificantBits();
+        queue = mn + "-" + UUID.randomUUID().getMostSignificantBits();
     }
 
     @AfterEach
@@ -62,11 +63,13 @@ public class SqsTestBase extends WeldTestBase {
         }
         // Release the config objects
         SmallRyeConfigProviderResolver.instance().releaseConfig(ConfigProvider.getConfig());
+    }
+
+    @AfterAll
+    public static void stopClient() {
         if (client != null) {
             client.close();
-        }
-        if (localstack.isRunning() || localstack.isCreated()) {
-            localstack.close();
+            client = null;
         }
     }
 

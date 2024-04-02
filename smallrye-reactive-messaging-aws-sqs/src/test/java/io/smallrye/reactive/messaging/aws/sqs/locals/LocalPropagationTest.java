@@ -27,6 +27,7 @@ import io.smallrye.mutiny.infrastructure.Infrastructure;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import io.smallrye.reactive.messaging.annotations.Broadcast;
 import io.smallrye.reactive.messaging.annotations.Merge;
+import io.smallrye.reactive.messaging.aws.sqs.SqsClientProvider;
 import io.smallrye.reactive.messaging.aws.sqs.SqsConnector;
 import io.smallrye.reactive.messaging.aws.sqs.SqsTestBase;
 import io.smallrye.reactive.messaging.providers.locals.LocalContextMetadata;
@@ -39,17 +40,18 @@ public class LocalPropagationTest extends SqsTestBase {
     private MapBasedConfig dataconfig() {
         return new MapBasedConfig()
                 .with("mp.messaging.incoming.data.connector", SqsConnector.CONNECTOR_NAME)
-                .with("mp.messaging.incoming.data.endpointOverride", localstack.getEndpoint().toString())
-                .with("mp.messaging.incoming.data.region", localstack.getRegion());
+                .with("mp.messaging.incoming.data.queue", queue);
     }
 
     @BeforeEach
     void setUp() {
-        sendMessage(createQueue("data"), 5, (i, b) -> b.messageBody(String.valueOf(i + 1)));
+        sendMessage(createQueue(queue), 5, (i, b) -> b.messageBody(String.valueOf(i + 1)));
     }
 
     @Test
     public void testLinearPipeline() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         LinearPipeline bean = runApplication(dataconfig(), LinearPipeline.class);
         await().until(() -> bean.getResults().size() >= 5);
         assertThat(bean.getResults()).containsExactly(2, 3, 4, 5, 6);
@@ -57,6 +59,8 @@ public class LocalPropagationTest extends SqsTestBase {
 
     @Test
     public void testPipelineWithABlockingStage() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         PipelineWithABlockingStage bean = runApplication(dataconfig(), PipelineWithABlockingStage.class);
         await().until(() -> bean.getResults().size() >= 5);
         assertThat(bean.getResults()).containsExactly(2, 3, 4, 5, 6);
@@ -65,6 +69,8 @@ public class LocalPropagationTest extends SqsTestBase {
 
     @Test
     public void testPipelineWithAnUnorderedBlockingStage() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         PipelineWithAnUnorderedBlockingStage bean = runApplication(dataconfig(), PipelineWithAnUnorderedBlockingStage.class);
         await().until(() -> bean.getResults().size() >= 5);
         assertThat(bean.getResults()).containsExactlyInAnyOrder(2, 3, 4, 5, 6);
@@ -73,7 +79,8 @@ public class LocalPropagationTest extends SqsTestBase {
 
     @Test
     public void testPipelineWithMultipleBlockingStages() {
-
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         PipelineWithMultipleBlockingStages bean = runApplication(dataconfig(), PipelineWithMultipleBlockingStages.class);
         await().until(() -> bean.getResults().size() >= 5);
         assertThat(bean.getResults()).containsExactlyInAnyOrder(2, 3, 4, 5, 6);
@@ -81,6 +88,8 @@ public class LocalPropagationTest extends SqsTestBase {
 
     @Test
     public void testPipelineWithBroadcastAndMerge() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         PipelineWithBroadcastAndMerge bean = runApplication(dataconfig(), PipelineWithBroadcastAndMerge.class);
         await().until(() -> bean.getResults().size() >= 10);
         assertThat(bean.getResults()).hasSize(10).contains(2, 3, 4, 5, 6);
@@ -88,6 +97,8 @@ public class LocalPropagationTest extends SqsTestBase {
 
     @Test
     public void testLinearPipelineWithAckOnCustomThread() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         LinearPipelineWithAckOnCustomThread bean = runApplication(dataconfig(), LinearPipelineWithAckOnCustomThread.class);
         await().until(() -> bean.getResults().size() >= 5);
         assertThat(bean.getResults()).containsExactly(2, 3, 4, 5, 6);
@@ -96,6 +107,8 @@ public class LocalPropagationTest extends SqsTestBase {
 
     @Test
     public void testPipelineWithAnAsyncStage() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
         PipelineWithAnAsyncStage bean = runApplication(dataconfig(), PipelineWithAnAsyncStage.class);
         await().until(() -> bean.getResults().size() >= 5);
         assertThat(bean.getResults()).containsExactly(2, 3, 4, 5, 6);
