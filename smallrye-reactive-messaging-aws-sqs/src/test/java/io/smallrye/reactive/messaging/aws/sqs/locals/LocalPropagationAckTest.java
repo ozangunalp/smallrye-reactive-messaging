@@ -46,6 +46,16 @@ public class LocalPropagationAckTest extends SqsTestBase {
         assertThat(bean.getResults()).containsExactly(2, 3, 4, 5, 6);
     }
 
+    @Test
+    public void testChannelWithAckOnMessageContextNothingAck() {
+        IncomingChannelWithAckOnMessageContext bean = runApplication(dataconfig()
+                .with("mp.messaging.incoming.data.ack.delete", false),
+                IncomingChannelWithAckOnMessageContext.class);
+        bean.process(i -> i + 1);
+        await().until(() -> bean.getResults().size() >= 5);
+        assertThat(bean.getResults()).containsExactly(2, 3, 4, 5, 6);
+    }
+
     @ApplicationScoped
     public static class IncomingChannelWithAckOnMessageContext {
 
