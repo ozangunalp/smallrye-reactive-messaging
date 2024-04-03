@@ -22,6 +22,8 @@ import org.eclipse.microprofile.reactive.messaging.spi.Connector;
 import io.smallrye.reactive.messaging.annotations.ConnectorAttribute;
 import io.smallrye.reactive.messaging.connector.InboundConnector;
 import io.smallrye.reactive.messaging.connector.OutboundConnector;
+import io.smallrye.reactive.messaging.health.HealthReport;
+import io.smallrye.reactive.messaging.health.HealthReporter;
 import io.smallrye.reactive.messaging.json.JsonMapping;
 import io.smallrye.reactive.messaging.providers.connectors.ExecutionHolder;
 import io.smallrye.reactive.messaging.providers.helpers.CDIUtils;
@@ -33,13 +35,15 @@ import io.vertx.mutiny.core.Vertx;
 @ConnectorAttribute(name = "region", type = "string", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "The name of the SQS region")
 @ConnectorAttribute(name = "endpointOverride", type = "string", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "The endpoint override")
 @ConnectorAttribute(name = "credentialsProvider", type = "string", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "The credential provider to be used in the client")
+@ConnectorAttribute(name = "health-enabled", type = "boolean", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "Whether health reporting is enabled (default) or disabled", defaultValue = "true")
+
 @ConnectorAttribute(name = "waitTimeSeconds", type = "int", direction = ConnectorAttribute.Direction.INCOMING, description = "The maximum amount of time in seconds to wait for messages to be received", defaultValue = "1")
 @ConnectorAttribute(name = "maxNumberOfMessages", type = "int", direction = ConnectorAttribute.Direction.INCOMING, description = "The maximum number of messages to receive", defaultValue = "10")
 @ConnectorAttribute(name = "receiveRequestCustomizer", type = "string", direction = ConnectorAttribute.Direction.INCOMING, description = "The identifier for the bean implementing a customizer to receive requests, defaults to channel name if not provided")
 @ConnectorAttribute(name = "receiveRequestRetries", type = "long", direction = ConnectorAttribute.Direction.INCOMING, description = "If set to a positive number, the connector will try to retry the request that was not delivered successfully (with a potentially transient error) until the number of retries is reached. If set to 0, retries are disabled.", defaultValue = "2147483647")
 @ConnectorAttribute(name = "receiveRequestPauseResume", type = "boolean", direction = ConnectorAttribute.Direction.INCOMING, description = "Whether the polling must be paused when the application does not request items and resume when it does. This allows implementing back-pressure based on the application capacity. Note that polling is not stopped, but will not retrieve any records when paused.", defaultValue = "true")
 @ConnectorAttribute(name = "ack.delete", type = "boolean", direction = ConnectorAttribute.Direction.INCOMING, description = "Whether the acknowledgement deletes the message from the queue", defaultValue = "true")
-public class SqsConnector implements InboundConnector, OutboundConnector {
+public class SqsConnector implements InboundConnector, OutboundConnector, HealthReporter {
 
     @Inject
     private SqsManager sqsManager;
@@ -90,5 +94,17 @@ public class SqsConnector implements InboundConnector, OutboundConnector {
         var channel = new SqsOutboundChannel(conf, sqsManager, jsonMapping);
         OUTBOUND_CHANNELS.add(channel);
         return channel.getSubscriber();
+    }
+
+    @Override
+    public HealthReport getLiveness() {
+        HealthReport.HealthReportBuilder builder = HealthReport.builder();
+        for (SqsInboundChannel channel : INBOUND_CHANNELS) {
+            channel.isAlive(builder);
+        }
+        for (SqsOutboundChannel channel : OUTBOUND_CHANNELS) {
+            channel.isAlive(builder);
+        }
+        return builder.build();
     }
 }

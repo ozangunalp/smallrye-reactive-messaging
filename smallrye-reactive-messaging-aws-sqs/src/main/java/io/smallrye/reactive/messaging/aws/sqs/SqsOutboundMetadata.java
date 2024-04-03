@@ -57,27 +57,27 @@ public class SqsOutboundMetadata {
         private Map<String, MessageAttributeValue> messageAttributes;
         private String queueUrl;
 
-        public Builder setGroupId(String groupId) {
+        public Builder groupId(String groupId) {
             this.groupId = groupId;
             return this;
         }
 
-        public Builder setDeduplicationId(String deduplicationId) {
+        public Builder deduplicationId(String deduplicationId) {
             this.deduplicationId = deduplicationId;
             return this;
         }
 
-        public Builder setDelaySeconds(Integer delaySeconds) {
+        public Builder delaySeconds(Integer delaySeconds) {
             this.delaySeconds = delaySeconds;
             return this;
         }
 
-        public Builder setMessageAttributes(Map<String, MessageAttributeValue> messageAttributes) {
+        public Builder messageAttributes(Map<String, MessageAttributeValue> messageAttributes) {
             this.messageAttributes = messageAttributes;
             return this;
         }
 
-        public Builder setQueueUrl(String queueUrl) {
+        public Builder queueUrl(String queueUrl) {
             this.queueUrl = queueUrl;
             return this;
         }

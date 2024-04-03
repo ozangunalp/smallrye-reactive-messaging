@@ -23,6 +23,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import io.smallrye.config.SmallRyeConfigProviderResolver;
+import io.smallrye.reactive.messaging.providers.extension.HealthCenter;
 import software.amazon.awssdk.auth.credentials.SystemPropertyCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sqs.SqsAsyncClient;
@@ -150,5 +151,24 @@ public class SqsTestBase extends WeldTestBase {
         } catch (ExecutionException | InterruptedException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public HealthCenter getHealth() {
+        if (container == null) {
+            throw new IllegalStateException("Application not started");
+        }
+        return container.getBeanManager().createInstance().select(HealthCenter.class).get();
+    }
+
+    public boolean isStarted() {
+        return getHealth().getStartup().isOk();
+    }
+
+    public boolean isReady() {
+        return getHealth().getReadiness().isOk();
+    }
+
+    public boolean isAlive() {
+        return getHealth().getLiveness().isOk();
     }
 }

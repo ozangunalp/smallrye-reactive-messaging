@@ -1,16 +1,20 @@
 package io.smallrye.reactive.messaging.aws.sqs;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import org.eclipse.microprofile.reactive.messaging.Message;
 
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.OutgoingMessageMetadata;
 import io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsLogging;
+import io.smallrye.reactive.messaging.health.HealthReport;
 import io.smallrye.reactive.messaging.json.JsonMapping;
 import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
 import software.amazon.awssdk.services.sqs.SqsAsyncClient;
@@ -22,19 +26,25 @@ public class SqsOutboundChannel {
     private final Flow.Subscriber<? extends Message<?>> subscriber;
     private final SqsAsyncClient client;
     private final String channel;
-
     private final Uni<String> queueUrlUni;
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final JsonMapping jsonMapping;
+    private final List<Throwable> failures = new ArrayList<>();
+    private final boolean healthEnabled;
 
     public SqsOutboundChannel(SqsConnectorOutgoingConfiguration conf, SqsManager sqsManager, JsonMapping jsonMapping) {
         this.channel = conf.getChannel();
+        this.healthEnabled = conf.getHealthEnabled();
         this.client = sqsManager.getClient(conf);
         this.queueUrlUni = sqsManager.getQueueUrl(conf).memoize().indefinitely();
         this.jsonMapping = jsonMapping;
         this.subscriber = MultiUtils.via(multi -> multi
                 .onSubscription().call(s -> queueUrlUni)
-                .call(m -> publishMessage(this.client, m)));
+                .call(m -> publishMessage(this.client, m))
+                .onFailure().invoke(f -> {
+                    AwsSqsLogging.log.unableToDispatch(channel, f);
+                    reportFailure(f);
+                }));
     }
 
     public Flow.Subscriber<? extends Message<?>> getSubscriber() {
@@ -140,5 +150,28 @@ public class SqsOutboundChannel {
 
     public void close() {
         closed.set(true);
+    }
+
+    private synchronized void reportFailure(Throwable failure) {
+        // Don't keep all the failures, there are only there for reporting.
+        if (failures.size() == 10) {
+            failures.remove(0);
+        }
+        failures.add(failure);
+    }
+
+    public void isAlive(HealthReport.HealthReportBuilder builder) {
+        if (healthEnabled) {
+            List<Throwable> actualFailures;
+            synchronized (this) {
+                actualFailures = new ArrayList<>(failures);
+            }
+            if (!actualFailures.isEmpty()) {
+                builder.add(channel, false,
+                        actualFailures.stream().map(Throwable::getMessage).collect(Collectors.joining()));
+            } else {
+                builder.add(channel, true);
+            }
+        }
     }
 }

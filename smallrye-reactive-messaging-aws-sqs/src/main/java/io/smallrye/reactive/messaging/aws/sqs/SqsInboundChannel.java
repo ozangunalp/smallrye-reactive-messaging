@@ -2,11 +2,13 @@ package io.smallrye.reactive.messaging.aws.sqs;
 
 import static io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsLogging.log;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import org.eclipse.microprofile.reactive.messaging.Message;
 
@@ -14,6 +16,7 @@ import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.reactive.messaging.aws.sqs.ack.SqsDeleteAckHandler;
 import io.smallrye.reactive.messaging.aws.sqs.ack.SqsNothingAckHandler;
+import io.smallrye.reactive.messaging.health.HealthReport;
 import io.smallrye.reactive.messaging.json.JsonMapping;
 import io.smallrye.reactive.messaging.providers.helpers.PausablePollingStream;
 import io.vertx.core.impl.VertxInternal;
@@ -37,9 +40,13 @@ public class SqsInboundChannel {
     private final SqsReceiveMessageRequestCustomizer customizer;
     private final long retries;
 
+    private final List<Throwable> failures = new ArrayList<>();
+    private final boolean healthEnabled;
+
     public SqsInboundChannel(SqsConnectorIncomingConfiguration conf, Vertx vertx, SqsManager sqsManager,
             SqsReceiveMessageRequestCustomizer customizer, JsonMapping jsonMapper) {
         this.channel = conf.getChannel();
+        this.healthEnabled = conf.getHealthEnabled();
         this.retries = conf.getReceiveRequestRetries();
         this.client = sqsManager.getClient(conf);
         this.queueUrlUni = sqsManager.getQueueUrl(conf).memoize().indefinitely();
@@ -63,7 +70,23 @@ public class SqsInboundChannel {
         this.stream = Multi.createFrom()
                 .deferred(() -> queueUrlUni.onItem().transformToMulti(queueUrl -> pollingStream.getStream()))
                 .emitOn(r -> context.runOnContext(r))
-                .onItem().transform(message -> new SqsMessage<>(message, jsonMapper, ackHandler));
+                .onItem().transform(message -> new SqsMessage<>(message, jsonMapper, ackHandler))
+                .onFailure().invoke(throwable -> {
+                    log.errorReceivingMessage(channel, throwable);
+                    reportFailure(throwable, false);
+                });
+    }
+
+    public synchronized void reportFailure(Throwable failure, boolean fatal) {
+        // Don't keep all the failures, there are only there for reporting.
+        if (failures.size() == 10) {
+            failures.remove(0);
+        }
+        failures.add(failure);
+
+        if (fatal) {
+            close();
+        }
     }
 
     public Uni<List<software.amazon.awssdk.services.sqs.model.Message>> request(String requestId, int retryCount) {
@@ -99,10 +122,6 @@ public class SqsInboundChannel {
                     } else {
                         return Uni.createFrom().failure(e);
                     }
-                })
-                .onFailure().recoverWithItem(e -> {
-                    log.errorReceivingMessage(e.getMessage());
-                    return null;
                 });
     }
 
@@ -113,5 +132,20 @@ public class SqsInboundChannel {
     public void close() {
         closed.set(true);
         requestExecutor.shutdown();
+    }
+
+    public void isAlive(HealthReport.HealthReportBuilder builder) {
+        if (healthEnabled) {
+            List<Throwable> actualFailures;
+            synchronized (this) {
+                actualFailures = new ArrayList<>(failures);
+            }
+            if (!actualFailures.isEmpty()) {
+                builder.add(channel, false,
+                        actualFailures.stream().map(Throwable::getMessage).collect(Collectors.joining()));
+            } else {
+                builder.add(channel, true);
+            }
+        }
     }
 }

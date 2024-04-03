@@ -1,9 +1,13 @@
 package io.smallrye.reactive.messaging.aws.sqs;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -88,6 +92,19 @@ public class OutboundMessageTest extends SqsTestBase {
                 .extracting(m -> m.body()).contains("0", "1", "2", "3", "4", "5", "6", "7", "8", "9");
     }
 
+    @Test
+    void testOutboundMessageNacking() {
+        SqsClientProvider.client = getSqsClient();
+        addBeans(SqsClientProvider.class);
+        createQueue(queue);
+        MapBasedConfig config = new MapBasedConfig()
+                .with("mp.messaging.outgoing.sink.connector", SqsConnector.CONNECTOR_NAME)
+                .with("mp.messaging.outgoing.sink.queue", queue);
+
+        MessageAckingApp app = runApplication(config, MessageAckingApp.class);
+        await().until(() -> app.nacked().size() == 10);
+    }
+
     @ApplicationScoped
     public static class RequestBuilderProducingApp {
         @Outgoing("sink")
@@ -107,7 +124,7 @@ public class OutboundMessageTest extends SqsTestBase {
         public Multi<Message<String>> produce() {
             return Multi.createFrom().range(0, 10)
                     .map(i -> Message.of(String.valueOf(i), Metadata.of(SqsOutboundMetadata.builder()
-                            .setMessageAttributes(Map.of("key", MessageAttributeValue.builder()
+                            .messageAttributes(Map.of("key", MessageAttributeValue.builder()
                                     .dataType("String").stringValue("value").build()))
                             .build())));
         }
@@ -121,12 +138,42 @@ public class OutboundMessageTest extends SqsTestBase {
         public GenericPayload<software.amazon.awssdk.services.sqs.model.Message> process(
                 software.amazon.awssdk.services.sqs.model.Message message) {
             return GenericPayload.of(message, Metadata.of(SqsOutboundMetadata.builder()
-                    .setGroupId("group")
-                    .setDeduplicationId(message.messageId())
-                    .setMessageAttributes(Map.of("key", MessageAttributeValue.builder()
+                    .groupId("group")
+                    .deduplicationId(message.messageId())
+                    .messageAttributes(Map.of("key", MessageAttributeValue.builder()
                             .dataType("String").stringValue("value").build()))
                     .build()));
         }
 
+    }
+
+    @ApplicationScoped
+    public static class MessageAckingApp {
+
+        List<Integer> acked = new CopyOnWriteArrayList<>();
+        List<Integer> nacked = new CopyOnWriteArrayList<>();
+
+        @Outgoing("sink")
+        Multi<Message<Integer>> produce() {
+            return Multi.createFrom().range(0, 10)
+                    .map(i -> Message.of(i, Metadata.of(SqsOutboundMetadata.builder()
+                            .messageAttributes(Map.of("key", MessageAttributeValue.builder()
+                                    .stringValue("value").build()))
+                            .build())).withAck(() -> {
+                                acked.add(i);
+                                return CompletableFuture.completedFuture(null);
+                            }).withNack(throwable -> {
+                                nacked.add(i);
+                                return CompletableFuture.completedFuture(null);
+                            }));
+        }
+
+        public List<Integer> acked() {
+            return acked;
+        }
+
+        public List<Integer> nacked() {
+            return nacked;
+        }
     }
 }
