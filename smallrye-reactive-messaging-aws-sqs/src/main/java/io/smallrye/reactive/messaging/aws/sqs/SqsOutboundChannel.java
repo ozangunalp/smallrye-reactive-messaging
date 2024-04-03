@@ -31,12 +31,14 @@ public class SqsOutboundChannel {
     private final JsonMapping jsonMapping;
     private final List<Throwable> failures = new ArrayList<>();
     private final boolean healthEnabled;
+    private final String groupId;
 
     public SqsOutboundChannel(SqsConnectorOutgoingConfiguration conf, SqsManager sqsManager, JsonMapping jsonMapping) {
         this.channel = conf.getChannel();
         this.healthEnabled = conf.getHealthEnabled();
         this.client = sqsManager.getClient(conf);
         this.queueUrlUni = sqsManager.getQueueUrl(conf).memoize().indefinitely();
+        this.groupId = conf.getGroupId().orElse(null);
         this.jsonMapping = jsonMapping;
         this.subscriber = MultiUtils.via(multi -> multi
                 .onSubscription().call(s -> queueUrlUni)
@@ -78,12 +80,16 @@ public class SqsOutboundChannel {
             return (SendMessageRequest) payload;
         }
         if (payload instanceof SendMessageRequest.Builder) {
-            return ((SendMessageRequest.Builder) payload)
-                    .queueUrl(queueUrl)
-                    .build();
+            SendMessageRequest.Builder builder = ((SendMessageRequest.Builder) payload)
+                    .queueUrl(queueUrl);
+            if (groupId != null) {
+                builder.messageGroupId(groupId);
+            }
+            return builder.build();
         }
         SendMessageRequest.Builder builder = SendMessageRequest.builder();
         Map<String, MessageAttributeValue> msgAttributes = new HashMap<>();
+        String groupId = this.groupId;
         Optional<SqsOutboundMetadata> metadata = m.getMetadata(SqsOutboundMetadata.class);
         if (metadata.isPresent()) {
             SqsOutboundMetadata md = metadata.get();
@@ -94,7 +100,7 @@ public class SqsOutboundChannel {
                 builder.messageDeduplicationId(md.getDeduplicationId());
             }
             if (md.getGroupId() != null) {
-                builder.messageGroupId(md.getGroupId());
+                groupId = md.getGroupId();
             }
             if (md.getDelaySeconds() != null) {
                 builder.delaySeconds(md.getDelaySeconds());
@@ -104,12 +110,13 @@ public class SqsOutboundChannel {
             }
         }
         if (payload instanceof software.amazon.awssdk.services.sqs.model.Message) {
-            software.amazon.awssdk.services.sqs.model.Message msg = (software.amazon.awssdk.services.sqs.model.Message) payload;
+            var msg = (software.amazon.awssdk.services.sqs.model.Message) payload;
             if (msg.hasAttributes()) {
                 msgAttributes.putAll(msg.messageAttributes());
             }
             return builder
                     .queueUrl(queueUrl)
+                    .messageGroupId(groupId)
                     .messageAttributes(msgAttributes)
                     .messageBody(msg.body())
                     .build();
@@ -117,6 +124,7 @@ public class SqsOutboundChannel {
         String messageBody = outgoingPayloadClassName(payload, msgAttributes);
         return builder
                 .queueUrl(queueUrl)
+                .messageGroupId(groupId)
                 .messageAttributes(msgAttributes)
                 .messageBody(messageBody)
                 .build();
