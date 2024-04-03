@@ -39,9 +39,9 @@ public class SqsClientConfigTest extends SqsTestBase {
         MapBasedConfig config = new MapBasedConfig()
                 .with("mp.messaging.incoming.data.connector", SqsConnector.CONNECTOR_NAME)
                 .with("mp.messaging.incoming.data.queue", queue)
-                .with("mp.messaging.incoming.data.endpointOverride", localstack.getEndpoint().toString())
+                .with("mp.messaging.incoming.data.endpoint-override", localstack.getEndpoint().toString())
                 .with("mp.messaging.incoming.data.region", localstack.getRegion())
-                .with("mp.messaging.incoming.data.credentialsProvider",
+                .with("mp.messaging.incoming.data.credentials-provider",
                         "software.amazon.awssdk.auth.credentials.SystemPropertyCredentialsProvider");
 
         runApplication(config, ConsumerApp.class);
@@ -53,9 +53,9 @@ public class SqsClientConfigTest extends SqsTestBase {
         MapBasedConfig config = new MapBasedConfig()
                 .with("mp.messaging.incoming.data.connector", SqsConnector.CONNECTOR_NAME)
                 .with("mp.messaging.incoming.data.queue", queue)
-                .with("mp.messaging.incoming.data.endpointOverride", localstack.getEndpoint().toString())
+                .with("mp.messaging.incoming.data.endpoint-override", localstack.getEndpoint().toString())
                 .with("mp.messaging.incoming.data.region", localstack.getRegion())
-                .with("mp.messaging.incoming.data.credentialsProvider", "not_existing_provider");
+                .with("mp.messaging.incoming.data.credentials-provider", "not_existing_provider");
 
         runApplication(config, ConsumerApp.class);
     }

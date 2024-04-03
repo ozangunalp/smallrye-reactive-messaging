@@ -101,7 +101,7 @@ class SqsProcessorTest extends SqsTestBase {
         MapBasedConfig config = new MapBasedConfig()
                 .with("mp.messaging.incoming.data.connector", SqsConnector.CONNECTOR_NAME)
                 .with("mp.messaging.incoming.data.queue", queue)
-                .with("mp.messaging.incoming.data.maxNumberOfMessages", 3)
+                .with("mp.messaging.incoming.data.max-number-of-messages", 3)
                 .with("mp.messaging.outgoing.sink.connector", SqsConnector.CONNECTOR_NAME)
                 .with("mp.messaging.outgoing.sink.queue", queue + "-sink");
 

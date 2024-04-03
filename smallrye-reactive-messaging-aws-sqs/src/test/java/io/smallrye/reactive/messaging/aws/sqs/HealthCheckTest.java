@@ -29,7 +29,7 @@ public class HealthCheckTest extends SqsTestBase {
         MapBasedConfig config = new MapBasedConfig()
                 .with("mp.messaging.incoming.data.connector", SqsConnector.CONNECTOR_NAME)
                 .with("mp.messaging.incoming.data.queue", queue)
-                .with("mp.messaging.incoming.data.maxNumberOfMessages", 20); // invalid configuration
+                .with("mp.messaging.incoming.data.max-number-of-messages", 20); // invalid configuration
 
         ConsumerApp app = runApplication(config, ConsumerApp.class);
         await().until(() -> !isAlive());

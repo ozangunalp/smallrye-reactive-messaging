@@ -3,6 +3,7 @@ package io.smallrye.reactive.messaging.aws.sqs;
 import static io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsLogging.log;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
@@ -42,6 +43,8 @@ public class SqsInboundChannel {
 
     private final List<Throwable> failures = new ArrayList<>();
     private final boolean healthEnabled;
+    private final List<String> messageAttributeNames;
+    private final Integer visibilityTimeout;
 
     public SqsInboundChannel(SqsConnectorIncomingConfiguration conf, Vertx vertx, SqsManager sqsManager,
             SqsReceiveMessageRequestCustomizer customizer, JsonMapping jsonMapper) {
@@ -54,7 +57,9 @@ public class SqsInboundChannel {
         this.requestExecutor = Executors
                 .newSingleThreadScheduledExecutor(r -> new Thread(r, "smallrye-aws-sqs-request-thread-" + channel));
         this.waitTimeSeconds = conf.getWaitTimeSeconds();
+        this.visibilityTimeout = conf.getVisibilityTimeout().orElse(null);
         this.maxNumberOfMessages = conf.getMaxNumberOfMessages();
+        this.messageAttributeNames = getMessageAttributeNames(conf);
         this.customizer = customizer;
 
         SqsAckHandler ackHandler = conf.getAckDelete() ? new SqsDeleteAckHandler(client, queueUrlUni)
@@ -77,6 +82,13 @@ public class SqsInboundChannel {
                 });
     }
 
+    private List<String> getMessageAttributeNames(SqsConnectorIncomingConfiguration conf) {
+        List<String> names = new ArrayList<>();
+        names.add(SqsConnector.CLASS_NAME_ATTRIBUTE);
+        conf.getReceiveRequestMessageAttributeNames().ifPresent(s -> names.addAll(Arrays.asList(s.split(","))));
+        return names;
+    }
+
     public synchronized void reportFailure(Throwable failure, boolean fatal) {
         // Don't keep all the failures, there are only there for reporting.
         if (failures.size() == 10) {
@@ -93,11 +105,14 @@ public class SqsInboundChannel {
         return queueUrlUni.map(queueUrl -> {
             var builder = ReceiveMessageRequest.builder()
                     .queueUrl(queueUrl)
-                    .messageAttributeNames(SqsConnector.CLASS_NAME_ATTRIBUTE)
+                    .messageAttributeNames(messageAttributeNames)
                     .waitTimeSeconds(waitTimeSeconds)
                     .maxNumberOfMessages(maxNumberOfMessages);
             if (requestId != null) {
                 builder.receiveRequestAttemptId(requestId);
+            }
+            if (visibilityTimeout != null) {
+                builder.visibilityTimeout(visibilityTimeout);
             }
             if (customizer != null) {
                 customizer.customize(builder);
