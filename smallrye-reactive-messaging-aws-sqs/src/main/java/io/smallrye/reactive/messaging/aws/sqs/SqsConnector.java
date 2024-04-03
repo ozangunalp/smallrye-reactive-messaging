@@ -27,6 +27,7 @@ import io.smallrye.reactive.messaging.health.HealthReporter;
 import io.smallrye.reactive.messaging.json.JsonMapping;
 import io.smallrye.reactive.messaging.providers.connectors.ExecutionHolder;
 import io.smallrye.reactive.messaging.providers.helpers.CDIUtils;
+import io.smallrye.reactive.messaging.providers.helpers.VertxJsonMapping;
 import io.vertx.mutiny.core.Vertx;
 
 @ApplicationScoped
@@ -64,6 +65,7 @@ public class SqsConnector implements InboundConnector, OutboundConnector, Health
 
     private static final List<SqsInboundChannel> INBOUND_CHANNELS = new CopyOnWriteArrayList<>();
     private static final List<SqsOutboundChannel> OUTBOUND_CHANNELS = new CopyOnWriteArrayList<>();
+
     public static final String CONNECTOR_NAME = "smallrye-sqs";
     public static final String CLASS_NAME_ATTRIBUTE = "_classname";
     private JsonMapping jsonMapping;
@@ -71,7 +73,7 @@ public class SqsConnector implements InboundConnector, OutboundConnector, Health
     @PostConstruct
     void init() {
         this.vertx = executionHolder.vertx();
-        this.jsonMapping = jsonMappers.isUnsatisfied() ? null : jsonMappers.get();
+        this.jsonMapping = jsonMappers.isUnsatisfied() ? new VertxJsonMapping() : jsonMappers.get();
     }
 
     public void terminate(

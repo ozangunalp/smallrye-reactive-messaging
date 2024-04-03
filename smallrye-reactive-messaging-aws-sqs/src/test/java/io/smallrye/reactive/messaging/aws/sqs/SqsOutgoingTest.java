@@ -177,7 +177,7 @@ class SqsOutgoingTest extends SqsTestBase {
         List<Message> messages = receiveMessages(queueUrl, expected, Duration.ofSeconds(10));
         assertThat(messages).hasSize(expected)
                 .extracting(Message::body)
-                .allSatisfy(body -> assertThat(body).startsWith("Person{").endsWith("}"));
+                .allSatisfy(body -> assertThat(body).startsWith("{\"name\":\"person-").endsWith("}"));
     }
 
 }
