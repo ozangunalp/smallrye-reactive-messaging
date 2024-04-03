@@ -11,12 +11,14 @@ import software.amazon.awssdk.regions.Region;
 public class SqsClientConfig {
 
     private final String queueName;
+    private final String queueUrl;
     private final Region region;
     private final String endpointOverride;
     private final String credentialsProviderClassName;
 
     public SqsClientConfig(SqsConnectorCommonConfiguration config) {
         this.queueName = config.getQueue().orElse(config.getChannel());
+        this.queueUrl = config.getQueueUrl().orElse(null);
         this.region = config.getRegion().map(Region::of).orElse(null);
         this.endpointOverride = config.getEndpointOverride().orElse(null);
         this.credentialsProviderClassName = config.getCredentialsProvider().orElse(null);
@@ -28,6 +30,10 @@ public class SqsClientConfig {
 
     public String getQueueName() {
         return queueName;
+    }
+
+    public String getQueueUrl() {
+        return queueUrl;
     }
 
     public String getEndpointOverride() {
@@ -54,12 +60,13 @@ public class SqsClientConfig {
         return Objects.equals(endpointOverride, that.endpointOverride) &&
                 Objects.equals(region, that.region) &&
                 Objects.equals(queueName, that.queueName) &&
+                Objects.equals(queueUrl, that.queueUrl) &&
                 Objects.equals(credentialsProviderClassName, that.credentialsProviderClassName);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(endpointOverride, region, queueName, credentialsProviderClassName);
+        return Objects.hash(endpointOverride, region, queueName, queueUrl, credentialsProviderClassName);
     }
 
     public AwsCredentialsProvider createCredentialsProvider() {

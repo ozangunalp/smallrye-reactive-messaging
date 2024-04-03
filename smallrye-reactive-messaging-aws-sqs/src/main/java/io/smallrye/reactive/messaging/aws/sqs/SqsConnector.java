@@ -33,6 +33,7 @@ import io.vertx.mutiny.core.Vertx;
 @ApplicationScoped
 @Connector(SqsConnector.CONNECTOR_NAME)
 @ConnectorAttribute(name = "queue", type = "string", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "The name of the SQS queue, defaults to channel name if not provided")
+@ConnectorAttribute(name = "queue.url", type = "string", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "The url of the SQS queue")
 @ConnectorAttribute(name = "region", type = "string", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "The name of the SQS region")
 @ConnectorAttribute(name = "endpoint-override", type = "string", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "The endpoint override")
 @ConnectorAttribute(name = "credentials-provider", type = "string", direction = ConnectorAttribute.Direction.INCOMING_AND_OUTGOING, description = "The credential provider to be used in the client")
