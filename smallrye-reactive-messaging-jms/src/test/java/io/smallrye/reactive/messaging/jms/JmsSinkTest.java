@@ -287,13 +287,13 @@ public class JmsSinkTest extends JmsTestBase {
 
         startArtemis();
 
-        // send after restart
-        bean.send("3");
-
         // init the client
         init();
         consumer = jms.createConsumer(q);
         consumer.setMessageListener(received::add);
+
+        // send after restart
+        bean.send("3");
 
         await().untilAsserted(() -> assertThat(received).hasSize(3)
                 .extracting(m -> m.getBody(String.class))
