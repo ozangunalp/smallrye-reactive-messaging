@@ -104,8 +104,10 @@ public class KafkaRequestReplyImpl<Req, Rep> extends MutinyEmitterImpl<Req>
         this.replyTopic = consumerConfig.getTopic().orElse(null);
         this.replyPartition = connectorConfig.getOptionalValue(REPLY_PARTITION_KEY, Integer.class).orElse(-1);
         this.replyTimeout = Duration.ofMillis(connectorConfig.getOptionalValue(REPLY_TIMEOUT_KEY, Integer.class).orElse(5000));
-        this.initialAssignmentTimeout = Duration.ofMillis(connectorConfig
-                .getOptionalValue(REPLY_INITIAL_ASSIGNMENT_TIMEOUT_KEY, Integer.class).orElse((int) replyTimeout.toMillis()));
+        this.initialAssignmentTimeout = connectorConfig
+                .getOptionalValue(REPLY_INITIAL_ASSIGNMENT_TIMEOUT_KEY, Integer.class)
+                .map(timeout -> timeout < 0 ? null : Duration.ofMillis(timeout))
+                .orElse(replyTimeout);
 
         this.autoOffsetReset = consumerConfig.getAutoOffsetReset();
         this.replyCorrelationIdHeader = connectorConfig.getOptionalValue(REPLY_CORRELATION_ID_HEADER_KEY, String.class)
@@ -154,7 +156,8 @@ public class KafkaRequestReplyImpl<Req, Rep> extends MutinyEmitterImpl<Req>
     @Override
     public Flow.Publisher<Message<? extends Req>> getPublisher() {
         return this.publisher
-                .plug(m -> "latest".equals(autoOffsetReset) ? m.onSubscription().call(() -> waitForAssignments()
+                .plug(m -> initialAssignmentTimeout != null && "latest".equals(autoOffsetReset)
+                        ? m.onSubscription().call(() -> waitForAssignments()
                         .ifNoItem()
                         .after(initialAssignmentTimeout)
                         .fail())
