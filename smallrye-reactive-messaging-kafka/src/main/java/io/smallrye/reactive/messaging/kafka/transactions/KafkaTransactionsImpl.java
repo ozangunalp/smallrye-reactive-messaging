@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -172,11 +173,24 @@ public class KafkaTransactionsImpl<T> extends MutinyEmitterImpl<T> implements Ka
         Uni<R> execute(Function<TransactionalEmitter<T>, Uni<R>> work) {
             currentTransaction = this;
             // If run on Vert.x context, `work` is called on the same context.
+            // And if run on worker thread, `work` is called on the worker thread.
             Context context = Vertx.currentContext();
+            boolean ioThread = Context.isOnEventLoopThread();
+            final Executor executor = context == null ? null : new Executor() {
+                @Override
+                public void execute(Runnable command) {
+                    if (ioThread) {
+                        VertxContext.runOnContext(context, command);
+                    } else {
+                        VertxContext.executeBlocking(context, command);
+                    }
+                }
+            };
             return producer.beginTransaction()
-                    .plug(u -> context == null ? u : u.emitOn(r -> VertxContext.runOnContext(context, r)))
+                    .plug(u -> executor == null ? u : u.emitOn(executor))
                     .chain(() -> executeInTransaction(work))
-                    .eventually(() -> currentTransaction = null);
+                    .eventually(() -> currentTransaction = null)
+                    .plug(u -> executor == null ? u : u.emitOn(executor));
         }
 
         private Uni<R> executeInTransaction(Function<TransactionalEmitter<T>, Uni<R>> work) {
