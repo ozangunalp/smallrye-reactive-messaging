@@ -5,6 +5,7 @@ import static io.smallrye.reactive.messaging.aws.sqs.i18n.AwsSqsLogging.log;
 
 import java.net.URI;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 import jakarta.annotation.Priority;
@@ -65,9 +66,21 @@ public class SqsManager {
         return getClient(new SqsClientConfig(config));
     }
 
-    public Uni<String> getQueueUrl(SqsConnectorCommonConfiguration config) {
+    public Uni<String> getQueueUrl(SqsConnectorIncomingConfiguration config) {
+        return getQueueUrl(config, true);
+    }
+
+    public Uni<String> getQueueUrl(SqsConnectorOutgoingConfiguration config) {
+        return getQueueUrl(config, false);
+    }
+
+    public Uni<String> getQueueUrl(SqsConnectorCommonConfiguration config, boolean urlRequired) {
         SqsClientConfig clientConfig = new SqsClientConfig(config);
         if (clientConfig.getQueueUrl() != null || queueUrls.containsKey(clientConfig)) {
+            if (!urlRequired && Objects.equals("\"\"", clientConfig.getQueueUrl())) {
+                log.queueUrlForChannel(config.getChannel(), null);
+                return Uni.createFrom().nullItem();
+            }
             return Uni.createFrom().item(queueUrls.computeIfAbsent(clientConfig, c -> {
                 log.queueUrlForChannel(config.getChannel(), clientConfig.getQueueUrl());
                 return clientConfig.getQueueUrl();
@@ -78,7 +91,11 @@ public class SqsManager {
                     .map(GetQueueUrlResponse::queueUrl)
                     .invoke(queueUrl -> queueUrls.put(clientConfig, queueUrl))
                     .invoke(queueUrl -> log.queueUrlForChannel(config.getChannel(), queueUrl))
-                    .onFailure().transform(ex::illegalStateUnableToRetrieveQueueUrl);
+                    .plug(e -> urlRequired ? e.onFailure().transform(ex::illegalStateUnableToRetrieveQueueUrl)
+                            : e.onFailure().recoverWithItem(() -> {
+                                log.queueUrlForChannel(config.getChannel(), null);
+                                return null;
+                            }));
         }
     }
 
