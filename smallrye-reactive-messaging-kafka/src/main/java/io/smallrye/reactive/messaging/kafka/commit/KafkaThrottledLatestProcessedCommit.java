@@ -3,6 +3,7 @@ package io.smallrye.reactive.messaging.kafka.commit;
 import static io.smallrye.reactive.messaging.kafka.i18n.KafkaLogging.log;
 import static io.smallrye.reactive.messaging.kafka.impl.TopicPartitions.getTopicPartition;
 
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -23,6 +24,8 @@ import io.smallrye.reactive.messaging.kafka.KafkaConsumer;
 import io.smallrye.reactive.messaging.providers.helpers.VertxContext;
 import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.mutiny.core.Vertx;
+import org.apache.kafka.common.requests.OffsetFetchResponse;
+import org.roaringbitmap.RoaringBitmap;
 
 /**
  * Will keep track of received messages and commit to the next offset after the latest
@@ -42,6 +45,7 @@ import io.vertx.mutiny.core.Vertx;
  * To use set `commit-strategy` to `throttled`.
  */
 public class KafkaThrottledLatestProcessedCommit extends ContextHolder implements KafkaCommitHandler {
+    private final static int MAX_METADATA_SIZE_BYTES = 4000; //~4KB metadata limit
 
     private final Map<TopicPartition, OffsetStore> offsetStores = new HashMap<>();
 
@@ -197,7 +201,8 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
                     .onItem().transform(offsets -> {
                         OffsetAndMetadata lastCommitted = offsets.get(recordsTopicPartition);
                         OffsetStore store = new OffsetStore(recordsTopicPartition, unprocessedRecordMaxAge,
-                                lastCommitted == null ? -1 : lastCommitted.offset() - 1);
+                                lastCommitted == null ? -1 : lastCommitted.offset() - 1,
+                                lastCommitted == null ? OffsetFetchResponse.NO_METADATA : lastCommitted.metadata());
                         offsetStores.put(recordsTopicPartition, store);
                         return store;
                     });
@@ -212,7 +217,14 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
                         startFlushAndCheckHealthTimer();
                     }
                 })
-                .onItem().transform(x -> record);
+                .onItem().transformToUni(store -> {
+                    if (store.isAlreadyProcessed(record)) {
+                        //if we already processed this (based on metadata), just ack it as processed and do not re-process
+                        return Uni.createFrom().completionStage(record.ack()).onItem().transform(ignore -> null);
+                    } else {
+                        return Uni.createFrom().item(record);
+                    }
+                });
     }
 
     /**
@@ -343,12 +355,14 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
         private final int unprocessedRecordMaxAge;
         private final AtomicLong unProcessedTotal = new AtomicLong();
         private long lastProcessedOffset;
+        private final Set<Long> prevProcessedOffsets;
 
-        OffsetStore(TopicPartition topicPartition, int unprocessedRecordMaxAge, long lastProcessedOffset) {
+        OffsetStore(TopicPartition topicPartition, int unprocessedRecordMaxAge, long lastProcessedOffset, String metadata) {
             this.topicPartition = topicPartition;
             this.unprocessedRecordMaxAge = unprocessedRecordMaxAge;
             log.initializeStoreAtPosition(topicPartition, lastProcessedOffset);
             this.lastProcessedOffset = lastProcessedOffset;
+            this.prevProcessedOffsets = deserializeMetadata(metadata, lastProcessedOffset);
         }
 
         long getLastProcessedOffset() {
@@ -429,6 +443,10 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
 
         long getUnprocessedCount() {
             return unProcessedTotal.get();
+        }
+
+        public <K, V> boolean isAlreadyProcessed(IncomingKafkaRecord<K, V> record) {
+            return prevProcessedOffsets.remove(record.getOffset());
         }
     }
 
@@ -511,8 +529,77 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
     private Map<TopicPartition, OffsetAndMetadata> getOffsets(Map<TopicPartition, Long> offsetsMapping) {
         Map<TopicPartition, OffsetAndMetadata> map = new HashMap<>();
         for (Map.Entry<TopicPartition, Long> entry : offsetsMapping.entrySet()) {
-            map.put(entry.getKey(), new OffsetAndMetadata(entry.getValue() + 1L, null));
+            String metadata = getProcessedOffsets(entry);
+            map.put(entry.getKey(), new OffsetAndMetadata(entry.getValue() + 1L, metadata));
         }
         return map;
+    }
+
+    private String getProcessedOffsets(Map.Entry<TopicPartition, Long> entry) {
+        RoaringBitmap processedOffsets = new RoaringBitmap();
+        int previous = -1;
+        for (long po : offsetStores.get(entry.getKey()).processedOffsets) {
+            if (po <= entry.getValue()) {
+                continue;
+            }
+            //encode kafka offset as an offset from the one we will commit (entry.getValue())
+            int current = (int) (po - entry.getValue());
+            processedOffsets.add(current);
+            if (metadataLimitExceeded(processedOffsets)) {
+                //remove last so we are within the limit
+                processedOffsets.remove(previous);
+                break;
+            }
+            previous = current;
+        }
+        processedOffsets.runOptimize();
+        return serializeAsMetadata(processedOffsets);
+    }
+
+    private static boolean metadataLimitExceeded(RoaringBitmap processedOffsets) {
+        return base64LengthInBytes(processedOffsets.serializedSizeInBytes()) > MAX_METADATA_SIZE_BYTES;
+    }
+
+    private static long base64LengthInBytes(long binaryLength) {
+        if (binaryLength <= 0) {
+            return 0;
+        }
+        return (binaryLength + 2) / 3 * 4;
+    }
+
+    private static String serializeAsMetadata(RoaringBitmap processedOffsets) {
+        String result = "";
+        if (processedOffsets == null || processedOffsets.isEmpty()) {
+            return result;
+        }
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (DataOutputStream dos = new DataOutputStream(baos)) {
+            processedOffsets.serialize(dos);
+            return Base64.getEncoder().encodeToString(baos.toByteArray());
+        } catch (IOException e) {
+            log.debug("Error during metadata serialization.", e);
+        }
+        return result;
+    }
+
+    private static Set<Long> deserializeMetadata(String metadata, long lastProcessedOffset) {
+        Set<Long> result = Collections.newSetFromMap(new ConcurrentHashMap<>());
+        if (metadata == null || metadata.isEmpty()) {
+            return result;
+        }
+        byte[] rawBytes = Base64.getDecoder().decode(metadata);
+        ByteArrayInputStream bais = new ByteArrayInputStream(rawBytes);
+        DataInputStream dis = new DataInputStream(bais);
+        RoaringBitmap prevProcessed = new RoaringBitmap();
+        try {
+            prevProcessed.deserialize(dis);
+            prevProcessed.stream()
+                    //decode offset as an offset from the kafka one we actually committed
+                    .mapToLong(po -> lastProcessedOffset + po)
+                    .forEach(result::add);
+        } catch (IOException e) {
+            log.debug("Error during metadata deserialization.", e);
+        }
+        return result;
     }
 }
