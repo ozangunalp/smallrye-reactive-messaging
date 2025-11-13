@@ -104,6 +104,104 @@ public class ThrottledConcurrencyTest extends KafkaCompanionTestBase {
     }
 
     @Test
+    public void testOrderedByManyKeysProcessing() {
+        // Create topic and produce messages with different keys
+        int customPartitions = 1;
+        int customRecordsParPartition = 500;
+        companion.topics().createAndWait(topic, customPartitions);
+
+        // Produce messages to different keys
+        companion.produceStrings()
+                .fromRecords(IntStream.range(0, customRecordsParPartition).boxed()
+                        .flatMap(i -> IntStream.range(0, customPartitions).boxed()
+                                .map(p -> new ProducerRecord<>(topic, p, "key-" + i, "value-" + i)))
+                        .toList())
+                .awaitCompletion();
+
+        MapBasedConfig config = kafkaConfig("mp.messaging.incoming.key-ordered-many-keys")
+                .with("topic", topic)
+                .with("group.id", "test-throttled-ordered-by-key-many-keys")
+                .with("throttled.unprocessed-record-max-age.ms", 1000)
+                .with("auto.offset.reset", "earliest")
+                .with("value.deserializer", StringDeserializer.class.getName())
+                .with("key.deserializer", StringDeserializer.class.getName())
+                .with("throttled.processing-order", "ordered_by_key")
+                .with("commit-strategy", "throttled")
+                .withPrefix("")
+                .with("smallrye.messaging.worker.my-pool.max-concurrency", concurrency);
+
+        OrderedByManyKeyParallelConsumer app = runApplication(config, OrderedByManyKeyParallelConsumer.class);
+        long start = System.currentTimeMillis();
+        System.out.println("Started processing messages " + start);
+
+        // Wait for all messages to be processed
+        await().atMost(2, TimeUnit.MINUTES)
+                .untilAsserted(() -> assertThat(app.received())
+                        .hasSize(customPartitions * customRecordsParPartition));
+        long duration = System.currentTimeMillis() - start;
+        System.out.println("Processing duration: " + duration + " ms");
+
+        // since all keys are different, max is 1
+        for (int i = 0; i < customRecordsParPartition; i++) {
+            assertThat(app.keyMaxCounter("key-" + i)).hasValue(1);
+        }
+
+        await().untilAsserted(() -> {
+            assertThat(companion.consumerGroups().offsets("test-throttled-ordered-by-key-many-keys"))
+                    .values().extracting(OffsetAndMetadata::offset)
+                    .containsOnly(500L);
+        });
+    }
+
+    @ApplicationScoped
+    public static class OrderedByManyKeyParallelConsumer {
+
+        Map<String, AtomicInteger> keyCounter = new ConcurrentHashMap<>();
+        Map<String, AtomicInteger> keyMaxCounter = new ConcurrentHashMap<>();
+
+        private final List<String> received = new CopyOnWriteArrayList<>();
+        private final AtomicInteger concurrency = new AtomicInteger(0);
+        private final AtomicInteger maxConcurrency = new AtomicInteger(0);
+
+        @Incoming("key-ordered-many-keys")
+        @Blocking(ordered = false, value = "my-pool")
+        public Uni<Void> consume(String payload, IncomingKafkaRecordMetadata<String, String> metadata)
+                throws InterruptedException {
+            int conc = concurrency.incrementAndGet();
+            maxConcurrency.updateAndGet(max -> Math.max(max, conc));
+            received.add(payload);
+            AtomicInteger counter = keyCounter.computeIfAbsent(metadata.getKey(), x -> new AtomicInteger(0));
+            int current = counter.incrementAndGet();
+            System.out.println(Thread.currentThread() + " Consumed message: " + payload + " from partition: "
+                    + metadata.getPartition() + ":"
+                    + metadata.getOffset() + " current concurrent: " + current);
+            keyMaxCounter.computeIfAbsent(metadata.getKey(), x -> new AtomicInteger(0))
+                    .updateAndGet(max -> Math.max(max, current));
+            //            Thread.sleep(500);
+            //            counter.decrementAndGet();
+            //            concurrency.decrementAndGet();
+            return Uni.createFrom().voidItem()
+                    .onItem().delayIt().by(Duration.ofMillis(processingTimeMs))
+                    .invoke(x -> {
+                        counter.decrementAndGet();
+                        concurrency.decrementAndGet();
+                    });
+        }
+
+        public List<String> received() {
+            return received;
+        }
+
+        public AtomicInteger keyMaxCounter(Object key) {
+            return keyMaxCounter.get(key);
+        }
+
+        public int maxConcurrency() {
+            return maxConcurrency.get();
+        }
+    }
+
+    @Test
     public void testOrderedByKeyProcessing() {
         // Create topic and produce messages with different keys
         companion.topics().createAndWait(topic, partitions);
