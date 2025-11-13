@@ -1,17 +1,7 @@
 package io.smallrye.reactive.messaging.kafka.commit;
 
-import io.smallrye.mutiny.Uni;
-import io.smallrye.reactive.messaging.kafka.CountKafkaCdiEvents;
-import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
-import io.smallrye.reactive.messaging.kafka.base.KafkaCompanionTestBase;
-import io.smallrye.reactive.messaging.kafka.base.UnsatisfiedInstance;
-import io.smallrye.reactive.messaging.kafka.impl.KafkaSource;
-import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.serialization.IntegerDeserializer;
-import org.apache.kafka.common.serialization.StringDeserializer;
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,8 +12,19 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.IntegerDeserializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.junit.jupiter.api.Test;
+
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.kafka.CountKafkaCdiEvents;
+import io.smallrye.reactive.messaging.kafka.KafkaConnectorIncomingConfiguration;
+import io.smallrye.reactive.messaging.kafka.base.KafkaCompanionTestBase;
+import io.smallrye.reactive.messaging.kafka.base.UnsatisfiedInstance;
+import io.smallrye.reactive.messaging.kafka.impl.KafkaSource;
+import io.smallrye.reactive.messaging.test.common.config.MapBasedConfig;
 
 public class ThrottledStrategyMetadataTest extends KafkaCompanionTestBase {
 
@@ -44,6 +45,7 @@ public class ThrottledStrategyMetadataTest extends KafkaCompanionTestBase {
                 .with(ConsumerConfig.GROUP_ID_CONFIG, groupId)
                 .with(ConsumerConfig.CLIENT_ID_CONFIG, "A")
                 .with("throttled.unprocessed-record-max-age.ms", 100000)
+                .with("throttled.metadata-for-offsets.bytes", 4000)
                 .with("key.deserializer", StringDeserializer.class.getName());
 
         MapBasedConfig config2 = new MapBasedConfig()
@@ -58,6 +60,7 @@ public class ThrottledStrategyMetadataTest extends KafkaCompanionTestBase {
                 .with(ConsumerConfig.GROUP_ID_CONFIG, groupId)
                 .with(ConsumerConfig.CLIENT_ID_CONFIG, "B")
                 .with("throttled.unprocessed-record-max-age.ms", 100000)
+                .with("throttled.metadata-for-offsets.bytes", 4000)
                 .with("key.deserializer", StringDeserializer.class.getName());
 
         List<Integer> list1 = new ArrayList<>();

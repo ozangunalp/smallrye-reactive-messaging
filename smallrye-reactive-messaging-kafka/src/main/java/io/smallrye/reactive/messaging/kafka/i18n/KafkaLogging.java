@@ -356,4 +356,12 @@ public interface KafkaLogging extends BasicLogger {
     @LogMessage(level = Logger.Level.WARN)
     @Message(id = 18284, value = "Transaction commit failed for channel, aborting the transaction")
     void transactionCommitFailed(@Cause Throwable throwable);
+
+    @LogMessage(level = Logger.Level.DEBUG)
+    @Message(id = 18285, value = "Will not commit out of order offsets for group '%s'.")
+    void disableThrottledOutOfOrderOffsetsCommit(String groupId);
+
+    @LogMessage(level = Logger.Level.DEBUG)
+    @Message(id = 18286, value = "Will commit out of order offsets for group '%s' up to %d bytes.")
+    void setThrottledOutOfOrderOffsetsCommitByes(String groupId, int metadataForOffsetsBytes);
 }
