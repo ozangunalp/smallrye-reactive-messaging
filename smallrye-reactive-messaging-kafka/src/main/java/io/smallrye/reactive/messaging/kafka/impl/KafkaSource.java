@@ -8,6 +8,9 @@ import static io.smallrye.reactive.messaging.kafka.impl.RebalanceListeners.findM
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -176,28 +179,8 @@ public class KafkaSource<K, V> {
             ProcessingOrder processingOrder = ProcessingOrder.of(config.getThrottledProcessingOrder());
             incomingMulti = switch (processingOrder) {
                 case UNORDERED -> incomingMulti;
-                case ORDERED_BY_KEY -> incomingMulti.group()
-                        .by(message -> TopicPartitionKey.ofKey(
-                                message.getMetadata(IncomingKafkaRecordMetadata.class).get().getRecord()))
-                        .onItem().transformToMulti(g -> {
-                            PausableMulti<IncomingKafkaRecord<K, V>> pausable = new PausableMulti<>(g, false);
-                            return pausable.invoke(rec -> {
-                                pausable.pause();
-                                rec.afterProcessing(pausable::resume);
-                            });
-                        })
-                        .merge();
-                case ORDERED_BY_PARTITION -> incomingMulti.group()
-                        .by(message -> TopicPartitionKey.ofPartition(
-                                message.getMetadata(IncomingKafkaRecordMetadata.class).get().getRecord()))
-                        .onItem().transformToMulti(g -> {
-                            PausableMulti<IncomingKafkaRecord<K, V>> pausable = new PausableMulti<>(g, false);
-                            return pausable.invoke(rec -> {
-                                pausable.pause();
-                                rec.afterProcessing(pausable::resume);
-                            });
-                        })
-                        .merge();
+                case ORDERED_BY_KEY -> orderedBy(incomingMulti, TopicPartitionKey::ofKey);
+                case ORDERED_BY_PARTITION -> orderedBy(incomingMulti, TopicPartitionKey::ofPartition);
             };
 
             incomingMulti = incomingMulti.onItem().transformToUni(record -> {
@@ -266,6 +249,33 @@ public class KafkaSource<K, V> {
         } else {
             kafkaInstrumenter = null;
         }
+    }
+
+    private Multi<IncomingKafkaRecord<K, V>> orderedBy(Multi<IncomingKafkaRecord<K, V>> incomingMulti,
+            Function<ConsumerRecord<?, ?>, TopicPartitionKey> tpkFunc) {
+        return incomingMulti.plug(upstream -> {
+            ConcurrentMap<TopicPartitionKey, TopicPartitionKeyQueue<K, V>> tpkQueues = new ConcurrentHashMap<>();
+            return Multi.createFrom().emitter(emitter -> {
+                var sub = upstream.subscribe().with(rec -> {
+
+                    TopicPartitionKey key = tpkFunc.apply(
+                            rec.getMetadata(IncomingKafkaRecordMetadata.class)
+                                    .map(IncomingKafkaRecordMetadata::getRecord)
+                                    .orElseThrow(() -> new IllegalStateException(
+                                            "Missing Kafka metadata for record: " + rec)));
+
+                    tpkQueues.compute(key, (k, queue) -> {
+                        if (queue == null) {
+                            queue = new TopicPartitionKeyQueue<>(k, tpkQueues);
+                        }
+                        queue.submit(rec, emitter);
+                        return queue;
+                    });
+
+                }, emitter::fail, emitter::complete);
+                emitter.onTermination(sub::cancel);
+            });
+        });
     }
 
     public static Set<String> getTopics(KafkaConnectorIncomingConfiguration config) {

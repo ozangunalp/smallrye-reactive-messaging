@@ -43,7 +43,7 @@ import io.vertx.mutiny.core.Vertx;
  */
 public class KafkaThrottledLatestProcessedCommit extends ContextHolder implements KafkaCommitHandler {
 
-    private final Map<TopicPartition, OffsetStore> offsetStores = new HashMap<>();
+    private final Map<TopicPartition, OffsetStore> offsetStores = new ConcurrentHashMap<>();
 
     private final String groupId;
     private final KafkaConsumer<?, ?> consumer;
@@ -338,11 +338,12 @@ public class KafkaThrottledLatestProcessedCommit extends ContextHolder implement
     private class OffsetStore {
 
         private final TopicPartition topicPartition;
-        private final Queue<OffsetReceivedAt> receivedOffsets = new LinkedList<>();
-        private final Set<Long> processedOffsets = new HashSet<>();
+        private final Queue<OffsetReceivedAt> receivedOffsets = new PriorityBlockingQueue<>(11,
+                Comparator.comparingLong(OffsetReceivedAt::getOffset));
+        private final Set<Long> processedOffsets = Collections.newSetFromMap(new ConcurrentHashMap<>());
         private final int unprocessedRecordMaxAge;
         private final AtomicLong unProcessedTotal = new AtomicLong();
-        private long lastProcessedOffset;
+        private volatile long lastProcessedOffset;
 
         OffsetStore(TopicPartition topicPartition, int unprocessedRecordMaxAge, long lastProcessedOffset) {
             this.topicPartition = topicPartition;
