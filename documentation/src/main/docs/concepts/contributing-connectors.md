@@ -25,6 +25,19 @@ The following is an example of a connector skeleton :
 {{ insert('connectors/MyConnector.java') }}
 ```
 
+## Connector Lifecycle
+
+Because the connector is an `@ApplicationScoped` CDI bean, the `@PostConstruct` method is typically used to initialize the connector (e.g. creating the Vert.x instance).
+For graceful shutdown, the connector should observe the `@BeforeDestroyed(ApplicationScoped.class)` CDI event to close all channels and release resources.
+
+``` java
+{{ insert('connectors/MyConnector.java', 'terminate') }}
+```
+
+Each channel should implement a `close` method that stops consuming or producing messages and closes the underlying client.
+
+## Connector Configuration
+
 Note that the `getPublisher` and `getSubscriber` methods receive MicroProfile Config `Config` instance and wrap it with
 `MyConnectorIncomingConfiguration` and `MyConnectorOutgoingConfiguration` objects.
 
@@ -102,7 +115,7 @@ Some connectors already use Vert.x clients, such as RabbitMQ, AMQP 1.0 or MQTT.
 Other connectors such as Kafka or Pulsar directly use the client library of the messaging technology,
 therefore they create a Vert.x Context per channel to dispatch messages on that context.
 Connectors can access the `Vertx` instance by injecting the `ExecutionHolder` bean.
-[Mutiny operators `runSubscribtionOn` and `emitOn`](https://smallrye.io/smallrye-mutiny/latest/guides/emit-on-vs-run-subscription-on/) can be used to switch threads the events are dispatched on.
+[Mutiny operators `runSubscriptionOn` and `emitOn`](https://smallrye.io/smallrye-mutiny/latest/guides/emit-on-vs-run-subscription-on/) can be used to switch threads the events are dispatched on.
 
 ### Custom Message and Metadata implementations
 
@@ -388,4 +401,3 @@ Your test classes can therefore extend the `WeldTestBase` and provide configurat
 - `TracingPropagationTest`
 - Configuration test
 - Authentication test
-- Tests for

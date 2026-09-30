@@ -52,7 +52,7 @@ public class MyOpenTelemetryInstrumenter {
             return builder.buildProducerInstrumenter(MyTraceTextMapSetter.INSTANCE);
         }
     }
-    // </create-instrumener>
+    // </create-instrumenter>
 
     public Message<?> traceIncoming(Message<?> message, MyTrace myTrace, boolean makeCurrent) {
         return TracingUtils.traceIncoming(instrumenter, message, myTrace, makeCurrent);

@@ -43,6 +43,10 @@ public class MyOutgoingChannel {
         return this.subscriber;
     }
 
+    public void close() {
+        client.close();
+    }
+
     public String getChannel() {
         return this.channel;
     }

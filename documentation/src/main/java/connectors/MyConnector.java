@@ -9,7 +9,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Flow;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.BeforeDestroyed;
+import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.event.Reception;
 import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.config.Config;
@@ -46,6 +50,14 @@ public class MyConnector implements InboundConnector, OutboundConnector {
     void init() {
         this.vertx = executionHolder.vertx();
     }
+
+    // <terminate>
+    public void terminate(
+            @Observes(notifyObserver = Reception.IF_EXISTS) @Priority(50) @BeforeDestroyed(ApplicationScoped.class) Object event) {
+        incomingChannels.forEach(MyIncomingChannel::close);
+        outgoingChannels.forEach(MyOutgoingChannel::close);
+    }
+    // </terminate>
 
     @Override
     public Flow.Publisher<? extends Message<?>> getPublisher(Config config) {
