@@ -128,9 +128,10 @@ public class PulsarConnector implements InboundConnector, OutboundConnector, Hea
 
         ClientConfigurationData clientConf = configResolver.getClientConf(ic);
         String hash = clientHash(clientConf);
-        PulsarClientEntry entry = clients.computeIfAbsent(hash,
-                x -> new PulsarClientEntry(createPulsarClient(ic, clientConf)))
-                .retain(ic.getChannel());
+        // Retain inside compute so a concurrent releaseClient cannot remove and close the entry in between.
+        PulsarClientEntry entry = clients.compute(hash,
+                (key, current) -> (current == null ? new PulsarClientEntry(createPulsarClient(ic, clientConf)) : current)
+                        .retain(ic.getChannel()));
         channelHashes.put(ic.getChannel(), hash);
 
         try {
@@ -151,9 +152,10 @@ public class PulsarConnector implements InboundConnector, OutboundConnector, Hea
 
         ClientConfigurationData clientConf = configResolver.getClientConf(oc);
         String hash = clientHash(clientConf);
-        PulsarClientEntry entry = clients.computeIfAbsent(hash,
-                x -> new PulsarClientEntry(createPulsarClient(oc, clientConf)))
-                .retain(oc.getChannel());
+        // Retain inside compute so a concurrent releaseClient cannot remove and close the entry in between.
+        PulsarClientEntry entry = clients.compute(hash,
+                (key, current) -> (current == null ? new PulsarClientEntry(createPulsarClient(oc, clientConf)) : current)
+                        .retain(oc.getChannel()));
         channelHashes.put(oc.getChannel(), hash);
 
         try {

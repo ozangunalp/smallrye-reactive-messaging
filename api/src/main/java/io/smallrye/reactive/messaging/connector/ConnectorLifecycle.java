@@ -20,12 +20,12 @@ import java.util.concurrent.CompletionStage;
  * After all channels have been closed, {@link #terminate()} is called once per connector
  * to clean up connector-wide resources (e.g. admin clients, caches, shared connections).
  * <p>
- * <strong>Idempotency:</strong> {@link #terminate()} acts as a safety net in environments that do not use the
- * {@code ChannelLifecycleManager} (e.g. WildFly). It must be able to close all channels independently.
- * When the lifecycle manager is present, per-channel hooks are called first, and {@code terminate()} runs
- * afterward. Implementations should track channels (e.g. in a {@code ConcurrentHashMap}) and remove them
- * during per-channel close, so that {@code terminate()} only cleans up channels that were not already
- * closed individually.
+ * <strong>Idempotency:</strong> {@link #terminate()} is the final cleanup step. The per-channel hooks are
+ * called first, and {@code terminate()} runs afterward to release whatever was not already closed per
+ * channel (e.g. channels created after shutdown started, or channels whose close failed or timed out).
+ * It must therefore be able to close any remaining channel on its own. Implementations should track
+ * channels (e.g. in a {@code ConcurrentHashMap}) and remove them during per-channel close, so that
+ * {@code terminate()} only cleans up channels that were not already closed individually.
  */
 public interface ConnectorLifecycle {
 
