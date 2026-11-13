@@ -1,9 +1,11 @@
 package io.smallrye.reactive.messaging.providers.impl;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
@@ -28,6 +30,8 @@ import io.smallrye.reactive.messaging.ChannelLifecycleManager;
 import io.smallrye.reactive.messaging.ChannelRegistry;
 import io.smallrye.reactive.messaging.PausableChannel;
 import io.smallrye.reactive.messaging.connector.ConnectorLifecycle;
+import io.smallrye.reactive.messaging.connector.InboundConnector;
+import io.smallrye.reactive.messaging.connector.OutboundConnector;
 import io.smallrye.reactive.messaging.providers.extension.CompositePausableChannel;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderLogging;
 
@@ -119,6 +123,10 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             return;
         }
 
+        // Taken before the channels are closed, which unregisters them: the connectors actually in use.
+        // Connectors without channels may never have been created (their beans are created lazily), so they are left alone.
+        Set<String> usedConnectors = new LinkedHashSet<>(registry.getConnectorNames().values());
+
         try {
             List<Uni<Void>> list = registry.getIncomingNames().stream()
                     .map(channel -> closeIncoming(channel)
@@ -147,7 +155,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             log.warn("Error closing outgoing channels", e);
         }
 
-        terminateConnectors();
+        terminateConnectors(usedConnectors);
     }
 
     /**
@@ -285,10 +293,9 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
 
     // --- Connector termination ---
 
-    private void terminateConnectors() {
-        Set<ConnectorLifecycle> connectors = new HashSet<>();
-        connectors.addAll(connectorFactories.getInboundConnectors().values());
-        connectors.addAll(connectorFactories.getOutboundConnectors().values());
+    private void terminateConnectors(Collection<String> usedConnectors) {
+        List<ConnectorLifecycle> connectors = connectorsToTerminate(usedConnectors,
+                connectorFactories.getInboundConnectors(), connectorFactories.getOutboundConnectors());
 
         try {
             List<Uni<Void>> list = connectors.stream()
@@ -303,6 +310,35 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
         } catch (Exception e) {
             log.warn("Error during connector termination", e);
         }
+    }
+
+    /**
+     * The connectors to terminate: those of the given names, each once.
+     * <p>
+     * A connector implementing both {@link InboundConnector} and {@link OutboundConnector} (e.g. Kafka) is in both maps
+     * under the same name. If the inbound connector of a name is also an {@link OutboundConnector}, it is the outbound
+     * connector of that name too (another outbound bean with the same name would have been rejected at startup), so it
+     * is terminated once. This doesn't rely on the equality of the CDI client proxies.
+     *
+     * @param usedConnectors the names of the connectors used by channels
+     * @param inbound the inbound connectors, by name
+     * @param outbound the outbound connectors, by name
+     * @return the connectors to terminate
+     */
+    static List<ConnectorLifecycle> connectorsToTerminate(Collection<String> usedConnectors,
+            Map<String, ? extends InboundConnector> inbound, Map<String, ? extends OutboundConnector> outbound) {
+        List<ConnectorLifecycle> connectors = new ArrayList<>();
+        for (String name : new LinkedHashSet<>(usedConnectors)) {
+            InboundConnector in = inbound.get(name);
+            OutboundConnector out = outbound.get(name);
+            if (in != null) {
+                connectors.add(in);
+            }
+            if (out != null && !(in instanceof OutboundConnector)) {
+                connectors.add(out);
+            }
+        }
+        return connectors;
     }
 
     // --- Channel drain ---
