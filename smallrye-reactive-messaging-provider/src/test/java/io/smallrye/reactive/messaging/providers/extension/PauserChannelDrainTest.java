@@ -17,8 +17,8 @@ import io.smallrye.mutiny.helpers.test.AssertSubscriber;
 import io.smallrye.mutiny.operators.multi.processors.UnicastProcessor;
 import io.smallrye.reactive.messaging.MessagePublisherProvider;
 import io.smallrye.reactive.messaging.PausableChannel;
-import io.smallrye.reactive.messaging.connector.MapBasedConfig;
 import io.smallrye.reactive.messaging.providers.impl.InternalChannelRegistry;
+import io.smallrye.reactive.messaging.providers.impl.MapBasedConfig;
 
 /**
  * Drain semantics of {@link PausableChannelDecorator.PauserChannel} for channels fed by emitters.

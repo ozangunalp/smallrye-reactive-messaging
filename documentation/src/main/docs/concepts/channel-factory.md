@@ -79,6 +79,8 @@ Transform messages and forward them to an outgoing channel:
 ```
 
 The `process()` method transforms each incoming payload.
+Processing steps are chained: each `process()` or `processAsync()` call receives the output of the previous step,
+so `.process(a).process(b)` applies `a`, then `b`. A failure in any step negatively acknowledges the message.
 The `to()` terminal creates an outgoing channel and wires the processed stream to it.
 The outgoing message preserves the incoming message's metadata and ack/nack chain.
 
@@ -111,5 +113,5 @@ so a channel with the same name can be created again.
 | `subscribe(Function<T, Uni<Void>>)` | Async processing, ack on completion |
 | `blocking()` / `blocking(concurrency)` | Dispatch to worker threads |
 | `blocking(executor)` / `blocking(executor, concurrency)` | Dispatch to custom executor |
-| `process(Function)` / `processAsync(Function)` | Transform payloads |
+| `process(Function)` / `processAsync(Function)` | Add a transformation step, applied to the output of the previous one |
 | `to(subscriber)` / `to(OutgoingConnectorConfiguration)` | Forward to outgoing channel |

@@ -1,4 +1,4 @@
-package io.smallrye.reactive.messaging.connector;
+package io.smallrye.reactive.messaging.providers.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

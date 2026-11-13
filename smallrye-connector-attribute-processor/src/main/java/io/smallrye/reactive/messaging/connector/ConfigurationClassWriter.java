@@ -15,6 +15,12 @@ import io.smallrye.reactive.messaging.annotations.ConnectorAttribute;
 
 public class ConfigurationClassWriter {
 
+    /**
+     * The config implementation used by the generated builders. Referenced by name: it lives in the provider, which
+     * the connectors using this processor depend on, but the processor itself does not.
+     */
+    private static final String MAP_BASED_CONFIG = "io.smallrye.reactive.messaging.providers.impl.MapBasedConfig";
+
     private final ProcessingEnvironment environment;
 
     public ConfigurationClassWriter(ProcessingEnvironment environment) {
@@ -62,7 +68,7 @@ public class ConfigurationClassWriter {
             out.println("import java.util.HashMap;");
             out.println("import java.util.Objects;");
             out.println("import java.util.Map;");
-            out.println("import " + MapBasedConfig.class.getName() + ";");
+            out.println("import " + MAP_BASED_CONFIG + ";");
             out.println("import " + iface + ";");
             out.println("import org.eclipse.microprofile.reactive.messaging.spi.ConnectorFactory;");
             writeClassDeclaration(configSimpleClassName, direction, connector, out, parentConfigSimpleClassName,

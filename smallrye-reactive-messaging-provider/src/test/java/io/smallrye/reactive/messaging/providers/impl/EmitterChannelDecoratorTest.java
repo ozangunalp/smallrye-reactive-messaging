@@ -25,7 +25,6 @@ import io.smallrye.reactive.messaging.IncomingInterceptor;
 import io.smallrye.reactive.messaging.PublisherDecorator;
 import io.smallrye.reactive.messaging.WeldTestBaseWithoutTails;
 import io.smallrye.reactive.messaging.connector.IncomingConnectorConfiguration;
-import io.smallrye.reactive.messaging.connector.MapBasedConfig;
 import io.smallrye.reactive.messaging.connector.OutgoingConnectorConfiguration;
 import io.smallrye.reactive.messaging.providers.connectors.MyDummyConnector;
 

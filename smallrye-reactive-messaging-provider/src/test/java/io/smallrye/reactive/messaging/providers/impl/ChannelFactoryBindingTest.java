@@ -29,7 +29,6 @@ import io.smallrye.reactive.messaging.ChannelRegistry;
 import io.smallrye.reactive.messaging.MutinyEmitter;
 import io.smallrye.reactive.messaging.WeldTestBaseWithoutTails;
 import io.smallrye.reactive.messaging.connector.IncomingConnectorConfiguration;
-import io.smallrye.reactive.messaging.connector.MapBasedConfig;
 import io.smallrye.reactive.messaging.connector.OutgoingConnectorConfiguration;
 import io.smallrye.reactive.messaging.providers.connectors.MyDummyConnector;
 
@@ -277,6 +276,78 @@ class ChannelFactoryBindingTest extends WeldTestBaseWithoutTails {
                 .to(outgoingConfig("test-out"));
 
         await().untilAsserted(() -> assertThat(connector.list()).containsExactly("value-2", "value-3", "value-4"));
+    }
+
+    @Test
+    void processStepsAreChainedInOrder() {
+        initialize();
+
+        ChannelFactory factory = get(ChannelFactory.class);
+        MyDummyConnector connector = container.select(MyDummyConnector.class, ConnectorLiteral.of("smallrye-dummy")).get();
+
+        // The second step receives the output of the first one (not the original payload).
+        factory.incoming(incomingConfig("test-in"), Integer.class)
+                .process(i -> i * 10)
+                .process(i -> "v-" + i)
+                .to(outgoingConfig("test-out"));
+
+        await().untilAsserted(() -> assertThat(connector.list()).containsExactly("v-20", "v-30", "v-40"));
+    }
+
+    @Test
+    void processAndProcessAsyncStepsAreChained() {
+        initialize();
+
+        ChannelFactory factory = get(ChannelFactory.class);
+        MyDummyConnector connector = container.select(MyDummyConnector.class, ConnectorLiteral.of("smallrye-dummy")).get();
+
+        factory.incoming(incomingConfig("test-in"), Integer.class)
+                .process(i -> i + 1)
+                .processAsync(i -> Uni.createFrom().item("a-" + i))
+                .process((s, metadata) -> s.toUpperCase())
+                .to(outgoingConfig("test-out"));
+
+        await().untilAsserted(() -> assertThat(connector.list()).containsExactly("A-3", "A-4", "A-5"));
+    }
+
+    @Test
+    void failureInALaterStepNacks() {
+        initialize();
+
+        ChannelFactory factory = get(ChannelFactory.class);
+
+        var emitter = new java.util.concurrent.atomic.AtomicReference<io.smallrye.mutiny.subscription.MultiEmitter<? super Message<?>>>();
+        Multi<Message<?>> source = Multi.createFrom().emitter(e -> emitter.set(e));
+
+        List<Object> nacked = new CopyOnWriteArrayList<>();
+        Multi<Message<?>> tracked = source
+                .map(msg -> msg.withNackWithMetadata((e, metadata) -> {
+                    nacked.add(msg.getPayload());
+                    return msg.nack(e);
+                }));
+
+        List<String> consumed = new CopyOnWriteArrayList<>();
+        factory.bind(tracked, Integer.class)
+                .process(i -> "s-" + i)
+                .process(s -> {
+                    if (s.equals("s-3")) {
+                        throw new RuntimeException("fail on 3");
+                    }
+                    return s;
+                })
+                .subscribe(payload -> {
+                    consumed.add(payload);
+                });
+
+        await().untilAsserted(() -> assertThat(emitter.get()).isNotNull());
+        emitter.get().emit(Message.of(2));
+        emitter.get().emit(Message.of(3));
+        emitter.get().emit(Message.of(4));
+
+        await().untilAsserted(() -> {
+            assertThat(consumed).containsExactly("s-2", "s-4");
+            assertThat(nacked).containsExactly(3);
+        });
     }
 
     @Test

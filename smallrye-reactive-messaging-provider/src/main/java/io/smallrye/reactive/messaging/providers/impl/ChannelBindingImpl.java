@@ -73,16 +73,25 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
                         .onItem().transformToMultiAndConcatenate(v -> Multi.createFrom().empty()));
     }
 
+    /**
+     * Returns a new binding applying the given step to the output of the current steps (or to the payload, if there is
+     * no step yet). A failure in any step nacks the message.
+     */
     @SuppressWarnings("unchecked")
-    private ChannelBindingImpl<I, Void> processAndConsume(BiFunction<O, Metadata, Uni<Void>> consumer) {
-        BiFunction<I, Metadata, Uni<Void>> composed;
+    private <T> ChannelBindingImpl<I, T> then(BiFunction<O, Metadata, Uni<T>> step) {
+        BiFunction<I, Metadata, Uni<T>> composed;
         if (processor == null) {
-            composed = (BiFunction<I, Metadata, Uni<Void>>) consumer;
+            // No step yet: the output is the payload itself (O is I).
+            composed = (payload, metadata) -> step.apply((O) payload, metadata);
         } else {
             composed = (payload, metadata) -> processor.apply(payload, metadata)
-                    .onItem().transformToUni(result -> consumer.apply(result, metadata));
+                    .onItem().transformToUni(result -> step.apply(result, metadata));
         }
         return new ChannelBindingImpl<>(upstream, channelFactory, executor, concurrency, composed);
+    }
+
+    private ChannelBindingImpl<I, Void> processAndConsume(BiFunction<O, Metadata, Uni<Void>> consumer) {
+        return then(consumer);
     }
 
     @Override
@@ -106,26 +115,23 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
     }
 
     @Override
-    public <T> ChannelBinding<I, T> process(Function<I, T> proc) {
-        return new ChannelBindingImpl<>(upstream, channelFactory, executor, concurrency,
-                (payload, metadata) -> Uni.createFrom().item(proc.apply(payload)));
+    public <T> ChannelBinding<I, T> process(Function<O, T> step) {
+        return then((output, metadata) -> Uni.createFrom().item(() -> step.apply(output)));
     }
 
     @Override
-    public <T> ChannelBinding<I, T> process(BiFunction<I, Metadata, T> processor) {
-        return new ChannelBindingImpl<>(upstream, channelFactory, executor, concurrency,
-                (payload, meta) -> Uni.createFrom().item(processor.apply(payload, meta)));
+    public <T> ChannelBinding<I, T> process(BiFunction<O, Metadata, T> step) {
+        return then((output, metadata) -> Uni.createFrom().item(() -> step.apply(output, metadata)));
     }
 
     @Override
-    public <T> ChannelBinding<I, T> processAsync(Function<I, Uni<T>> processor) {
-        return new ChannelBindingImpl<>(upstream, channelFactory, executor, concurrency,
-                (payload, metadata) -> processor.apply(payload));
+    public <T> ChannelBinding<I, T> processAsync(Function<O, Uni<T>> step) {
+        return then((output, metadata) -> step.apply(output));
     }
 
     @Override
-    public <T> ChannelBinding<I, T> processAsync(BiFunction<I, Metadata, Uni<T>> processor) {
-        return new ChannelBindingImpl<>(upstream, channelFactory, executor, concurrency, processor);
+    public <T> ChannelBinding<I, T> processAsync(BiFunction<O, Metadata, Uni<T>> step) {
+        return then(step);
     }
 
     @Override

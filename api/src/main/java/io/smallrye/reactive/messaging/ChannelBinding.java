@@ -29,14 +29,18 @@ import io.smallrye.reactive.messaging.connector.OutgoingConnectorConfiguration;
  * <li>On failure, the message is negatively acknowledged with the exception</li>
  * </ul>
  *
- * @param <I> the payload type
- * @param <O> the output type, used when a processor is set via {@link #process(Function)} or {@link #process(BiFunction)}
+ * Processing steps added with {@link #process(Function)}, {@link #processAsync(Function)} and their metadata variants
+ * are chained: each step receives the output of the previous one, so {@code .process(a).process(b)} applies {@code a}
+ * then {@code b}. A failure in any step negatively acknowledges the message.
+ *
+ * @param <I> the payload type of the channel
+ * @param <O> the output type: the payload type, or the result type of the last processing step
  */
 public interface ChannelBinding<I, O> {
 
     /**
      * Terminal operation that acknowledges each processed message and discards it.
-     * If a processor was set via {@link #process(Function)}, it is applied before acknowledging.
+     * The processing steps, if any, are applied before acknowledging.
      * On failure, the message is negatively acknowledged.
      *
      * @return a {@link Cancellable} to cancel the subscription
@@ -45,7 +49,7 @@ public interface ChannelBinding<I, O> {
 
     /**
      * Convenience for {@code .process(consumer).subscribe()}.
-     * Sets the consumer as a processor and subscribes, acknowledging each message after
+     * Adds the consumer as the last processing step and subscribes, acknowledging each message after
      * the consumer completes successfully.
      *
      * @param consumer the payload consumer
@@ -55,7 +59,7 @@ public interface ChannelBinding<I, O> {
 
     /**
      * Convenience for {@code .process(consumer).subscribe()}.
-     * Sets the consumer as a processor and subscribes, acknowledging each message after
+     * Adds the consumer as the last processing step and subscribes, acknowledging each message after
      * the consumer completes successfully.
      *
      * @param consumer the payload and metadata consumer
@@ -65,7 +69,7 @@ public interface ChannelBinding<I, O> {
 
     /**
      * Convenience for {@code .process(consumer).subscribe()}.
-     * Sets the consumer as a processor and subscribes, acknowledging each message after
+     * Adds the consumer as the last processing step and subscribes, acknowledging each message after
      * the returned {@link Uni} completes.
      *
      * @param consumer the async payload consumer returning a {@link Uni}
@@ -75,7 +79,7 @@ public interface ChannelBinding<I, O> {
 
     /**
      * Convenience for {@code .process(consumer).subscribe()}.
-     * Sets the consumer as a processor and subscribes, acknowledging each message after
+     * Adds the consumer as the last processing step and subscribes, acknowledging each message after
      * the returned {@link Uni} completes.
      *
      * @param consumer the async payload and metadata consumer returning a {@link Uni}
@@ -84,7 +88,8 @@ public interface ChannelBinding<I, O> {
     Cancellable subscribe(BiFunction<O, Metadata, Uni<Void>> consumer);
 
     /**
-     * Returns a new {@link ChannelBinding} that dispatches the consumer to a worker thread pool.
+     * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on a worker
+     * thread pool.
      * Messages are processed sequentially.
      * Use this when the consumer performs blocking operations.
      *
@@ -93,8 +98,8 @@ public interface ChannelBinding<I, O> {
     ChannelBinding<I, O> blocking();
 
     /**
-     * Returns a new {@link ChannelBinding} that dispatches the consumer to a worker thread pool,
-     * processing up to {@code concurrency} messages in parallel.
+     * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on a worker
+     * thread pool, processing up to {@code concurrency} messages in parallel.
      * Use this when the consumer performs blocking operations.
      *
      * @param concurrency the maximum number of messages processed concurrently
@@ -103,7 +108,8 @@ public interface ChannelBinding<I, O> {
     ChannelBinding<I, O> blocking(int concurrency);
 
     /**
-     * Returns a new {@link ChannelBinding} that dispatches the consumer to the given executor.
+     * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on the given
+     * executor.
      * Messages are processed sequentially.
      * Use this when the consumer performs blocking operations.
      *
@@ -113,8 +119,8 @@ public interface ChannelBinding<I, O> {
     ChannelBinding<I, O> blocking(Executor executor);
 
     /**
-     * Returns a new {@link ChannelBinding} that dispatches the consumer to the given executor,
-     * processing up to {@code concurrency} messages in parallel.
+     * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on the given
+     * executor, processing up to {@code concurrency} messages in parallel.
      * Use this when the consumer performs blocking operations.
      *
      * @param executor the executor to run the consumer on
@@ -124,45 +130,51 @@ public interface ChannelBinding<I, O> {
     ChannelBinding<I, O> blocking(Executor executor, int concurrency);
 
     /**
-     * Sets a transformation function on this binding.
-     * The processor transforms each incoming payload before forwarding.
+     * Adds a transformation step, applied to the current output: the payload, or the result of the previous step.
      * Use {@link #to(Flow.Subscriber)} to wire the processed stream to an outgoing channel.
      *
-     * @param processor the payload transformation function
-     * @return this {@link ChannelBinding} with the processor set
+     * @param processor the transformation function
+     * @param <T> the result type of the step
+     * @return a new {@link ChannelBinding} with the step added after the existing ones
      */
-    <T> ChannelBinding<I, T> process(Function<I, T> processor);
+    <T> ChannelBinding<I, T> process(Function<O, T> processor);
 
     /**
-     * Sets a transformation function with metadata access on this binding.
+     * Adds a transformation step with metadata access, applied to the current output: the payload, or the result of
+     * the previous step.
      * Use {@link #to(Flow.Subscriber)} to wire the processed stream to an outgoing channel.
      *
-     * @param processor the payload and metadata transformation function
-     * @return this {@link ChannelBinding} with the processor set
+     * @param processor the transformation function, receiving the current output and the message metadata
+     * @param <T> the result type of the step
+     * @return a new {@link ChannelBinding} with the step added after the existing ones
      */
-    <T> ChannelBinding<I, T> process(BiFunction<I, Metadata, T> processor);
+    <T> ChannelBinding<I, T> process(BiFunction<O, Metadata, T> processor);
 
     /**
-     * Sets an async transformation function on this binding.
+     * Adds an async transformation step, applied to the current output: the payload, or the result of the previous
+     * step.
      * Use {@link #to(Flow.Subscriber)} to wire the processed stream to an outgoing channel.
      *
-     * @param processor the async payload transformation function
-     * @return this {@link ChannelBinding} with the processor set
+     * @param processor the async transformation function
+     * @param <T> the result type of the step
+     * @return a new {@link ChannelBinding} with the step added after the existing ones
      */
-    <T> ChannelBinding<I, T> processAsync(Function<I, Uni<T>> processor);
+    <T> ChannelBinding<I, T> processAsync(Function<O, Uni<T>> processor);
 
     /**
-     * Sets an async transformation function with metadata access on this binding.
+     * Adds an async transformation step with metadata access, applied to the current output: the payload, or the
+     * result of the previous step.
      * Use {@link #to(Flow.Subscriber)} to wire the processed stream to an outgoing channel.
      *
-     * @param processor the async payload and metadata transformation function
-     * @return this {@link ChannelBinding} with the processor set
+     * @param processor the async transformation function, receiving the current output and the message metadata
+     * @param <T> the result type of the step
+     * @return a new {@link ChannelBinding} with the step added after the existing ones
      */
-    <T> ChannelBinding<I, T> processAsync(BiFunction<I, Metadata, Uni<T>> processor);
+    <T> ChannelBinding<I, T> processAsync(BiFunction<O, Metadata, Uni<T>> processor);
 
     /**
      * Wires the stream to an outgoing subscriber.
-     * If {@link #process(Function)} was called, each message is transformed before forwarding.
+     * If processing steps were added, each message is transformed by them before forwarding.
      * Otherwise, messages are forwarded as-is.
      * The outgoing message preserves the incoming message's metadata and ack/nack chain.
      *
