@@ -128,12 +128,48 @@ class PauserChannelDrainTest {
         registry.register("out", StubEmitter.class, emitter);
 
         AssertSubscriber<Message<?>> sink = subscribe(decorator.decorate(Multi.createFrom().publisher(source),
-                List.of("out"), new MapBasedConfig(Map.of())));
+                List.of("out"), new MapBasedConfig(Map.of("pausable", "true"))));
         source.onNext(Message.of("a"));
         sink.request(1);
 
         assertThat(pauseAndDrain("out")).isCompleted();
         assertThat(emitter.completed).isTrue();
+    }
+
+    @Test
+    void secondDecorationOfAnEmitterChannelKeepsTheFirstPauseStage() {
+        UnicastProcessor<Message<String>> source = UnicastProcessor.create();
+        StubEmitter emitter = new StubEmitter(source::onComplete);
+        registry.register("out", StubEmitter.class, emitter);
+
+        // Emitter side (publisher decorators), then connector side (subscriber decorators), with the same config.
+        Multi<? extends Message<?>> emitterSide = decorator.decorate(Multi.createFrom().publisher(source),
+                List.of("out"), GRACEFUL);
+        PausableChannel first = registry.getPausable("out");
+        Multi<? extends Message<?>> connectorSide = decorator.decorate(emitterSide, List.of("out"), GRACEFUL);
+
+        assertThat(connectorSide).isSameAs(emitterSide);
+        assertThat(registry.getPausable("out")).isSameAs(first);
+
+        // The remaining pause stage still completes the emitter and drains.
+        AssertSubscriber<Message<?>> sink = subscribe(connectorSide);
+        source.onNext(Message.of("a"));
+        sink.request(1);
+        CompletableFuture<Void> drain = pauseAndDrain("out");
+        assertThat(emitter.completed).isTrue();
+        sink.getItems().forEach(m -> m.ack().toCompletableFuture().join());
+        assertThat(drain).isCompleted();
+    }
+
+    @Test
+    void channelIsNotPausableByDefaultWithoutGracefulShutdown() {
+        Multi<Message<String>> source = Multi.createFrom().empty();
+
+        assertThat(decorator.decorate(source, List.of("plain"), new MapBasedConfig(Map.of()))).isSameAs(source);
+        assertThat(registry.getPausable("plain")).isNull();
+
+        decorator.decorate(source, List.of("graceful"), GRACEFUL);
+        assertThat(registry.getPausable("graceful")).isNotNull();
     }
 
     private CompletableFuture<Void> pauseAndDrain(String channel) {

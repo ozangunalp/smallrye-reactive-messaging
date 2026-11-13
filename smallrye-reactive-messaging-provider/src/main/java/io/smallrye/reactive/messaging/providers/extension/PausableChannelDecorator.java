@@ -44,9 +44,19 @@ public class PausableChannelDecorator implements PublisherDecorator, SubscriberD
         if (channelConfig == null) {
             return publisher;
         }
+        // For incoming connector channels, the effective graceful-shutdown value was resolved by the connector.
+        boolean gracefulShutdown = channelConfig
+                .getOptionalValue(PausableChannelConfiguration.GRACEFUL_SHUTDOWN_PROPERTY, Boolean.class)
+                .orElse(false);
+        // Graceful shutdown pauses and drains the channel, so it makes the channel pausable unless configured otherwise.
         boolean pausable = channelConfig.getOptionalValue(PausableChannelConfiguration.PAUSABLE_PROPERTY, Boolean.class)
-                .orElse(true);
+                .orElse(gracefulShutdown);
         if (!pausable) {
+            return publisher;
+        }
+        if (channelName.stream().allMatch(name -> registry.getPausable(name) != null)) {
+            // Already pausable: an emitter channel bound to an outbound connector is decorated on the emitter side
+            // (publisher decorators), then on the connector side (subscriber decorators). Keep a single pause stage.
             return publisher;
         }
         boolean initiallyPaused = channelConfig
@@ -62,9 +72,6 @@ public class PausableChannelDecorator implements PublisherDecorator, SubscriberD
         PausableBufferStrategy bufferStrategy = channelConfig
                 .getOptionalValue(PausableChannelConfiguration.BUFFER_STRATEGY_PROPERTY, PausableBufferStrategy.class)
                 .orElse(null);
-        boolean gracefulShutdown = channelConfig
-                .getOptionalValue(PausableChannelConfiguration.GRACEFUL_SHUTDOWN_PROPERTY, Boolean.class)
-                .orElse(false);
         int drainTimeoutMs = channelConfig
                 .getOptionalValue(PausableChannelConfiguration.GRACEFUL_SHUTDOWN_DRAIN_TIMEOUT_PROPERTY, Integer.class)
                 .orElse(10000);

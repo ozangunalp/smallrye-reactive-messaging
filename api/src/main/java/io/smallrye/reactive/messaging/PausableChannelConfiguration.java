@@ -8,6 +8,8 @@ public interface PausableChannelConfiguration {
 
     /**
      * The name of the property to configure whether the channel is pausable.
+     * <p>
+     * When not set, it defaults to the channel's {@link #GRACEFUL_SHUTDOWN_PROPERTY graceful-shutdown} value.
      */
     String PAUSABLE_PROPERTY = "pausable";
 

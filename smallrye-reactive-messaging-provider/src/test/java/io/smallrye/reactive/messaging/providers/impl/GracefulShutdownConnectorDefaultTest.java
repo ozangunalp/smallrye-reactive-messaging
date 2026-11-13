@@ -63,6 +63,8 @@ class GracefulShutdownConnectorDefaultTest extends WeldTestBaseWithoutTails {
     void channelPropertyOverridesConnectorDefault() {
         Properties props = new Properties();
         props.put("mp.messaging.incoming.in." + PausableChannelConfiguration.GRACEFUL_SHUTDOWN_PROPERTY, "false");
+        // Without graceful shutdown the channel is not pausable by default.
+        props.put("mp.messaging.incoming.in." + PausableChannelConfiguration.PAUSABLE_PROPERTY, "true");
 
         CompletableFuture<Void> drain = startAndDrain(DrainByDefaultConnector.NAME, props);
 
@@ -76,6 +78,7 @@ class GracefulShutdownConnectorDefaultTest extends WeldTestBaseWithoutTails {
         Properties props = new Properties();
         props.put("mp.messaging.connector." + DrainByDefaultConnector.NAME + "."
                 + PausableChannelConfiguration.GRACEFUL_SHUTDOWN_PROPERTY, "false");
+        props.put("mp.messaging.incoming.in." + PausableChannelConfiguration.PAUSABLE_PROPERTY, "true");
 
         CompletableFuture<Void> drain = startAndDrain(DrainByDefaultConnector.NAME, props);
 
@@ -85,7 +88,9 @@ class GracefulShutdownConnectorDefaultTest extends WeldTestBaseWithoutTails {
 
     @Test
     void frameworkDefaultIsDisabledForConnectorsWithoutOverride() {
-        CompletableFuture<Void> drain = startAndDrain(PlainConnector.NAME, new Properties());
+        Properties props = new Properties();
+        props.put("mp.messaging.incoming.in." + PausableChannelConfiguration.PAUSABLE_PROPERTY, "true");
+        CompletableFuture<Void> drain = startAndDrain(PlainConnector.NAME, props);
 
         await().atMost(2, TimeUnit.SECONDS).until(drain::isDone);
         assertThat(GatedConsumer.GATE).isNotDone();
@@ -102,6 +107,22 @@ class GracefulShutdownConnectorDefaultTest extends WeldTestBaseWithoutTails {
 
         GatedConsumer.GATE.complete(null);
         await().atMost(5, TimeUnit.SECONDS).until(drain::isDone);
+    }
+
+    @Test
+    void pausableFollowsTheResolvedGracefulShutdownValue() {
+        Properties props = new Properties();
+        props.put("mp.messaging.incoming.in.connector", PlainConnector.NAME);
+        props.put("mp.messaging.incoming.other.connector", DrainByDefaultConnector.NAME);
+        installConfigFromProperties(props);
+        addBeanClass(DrainByDefaultConnector.class, PlainConnector.class, GatedConsumer.class, OtherConsumer.class);
+        initialize();
+
+        ChannelRegistry registry = get(ChannelRegistry.class);
+        // Graceful shutdown disabled (framework default): not pausable.
+        assertThat(registry.getPausable("in")).isNull();
+        // Graceful shutdown enabled by the connector's default: pausable.
+        assertThat(registry.getPausable("other")).isNotNull();
     }
 
     /**
@@ -152,6 +173,15 @@ class GracefulShutdownConnectorDefaultTest extends WeldTestBaseWithoutTails {
         @Override
         public Flow.Publisher<? extends Message<?>> getPublisher(Config config) {
             return Multi.createFrom().items("a", "b", "c").map(Message::of);
+        }
+    }
+
+    @ApplicationScoped
+    public static class OtherConsumer {
+
+        @Incoming("other")
+        public void consume(String payload) {
+            // Only consumes the second channel.
         }
     }
 

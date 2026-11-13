@@ -137,7 +137,8 @@ Each phase is idempotent — the CDI observer skips already-completed phases.
 ## Pausable Channels and Drain
 
 Graceful shutdown is built on top of [Pausable Channels](pausable-channels.md).
-When `graceful-shutdown` is enabled, the channel is automatically configured as pausable.
+When `graceful-shutdown` is enabled, the channel is automatically configured as pausable,
+unless `pausable` is explicitly set to `false`.
 
 The `PausableChannel` interface provides `pauseAndDrain()` for programmatic use outside of shutdown:
 

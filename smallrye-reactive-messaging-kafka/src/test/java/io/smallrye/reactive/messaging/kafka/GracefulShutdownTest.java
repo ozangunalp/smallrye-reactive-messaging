@@ -202,6 +202,8 @@ public class GracefulShutdownTest extends KafkaCompanionTestBase {
         config.put("value.deserializer", IntegerDeserializer.class.getName());
         config.put("auto.offset.reset", "earliest");
         config.put("graceful-shutdown", false);
+        // Without graceful shutdown the channel is not pausable by default.
+        config.put("pausable", true);
 
         companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, i), 3);
 

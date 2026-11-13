@@ -46,6 +46,7 @@ public class ConsumerSeekTest extends KafkaCompanionTestBase {
         config.put("enable.auto.commit", "false");
         config.put("auto.offset.reset", "earliest");
         config.put("commit-strategy", commitStrategy);
+        config.put("pausable", true);
         config.put("consumer-rebalance-listener.name", "seek-listener");
         if ("throttled".equals(commitStrategy)) {
             config.put("auto.commit.interval.ms", 100);
@@ -170,6 +171,7 @@ public class ConsumerSeekTest extends KafkaCompanionTestBase {
         config.put("enable.auto.commit", "false");
         config.put("auto.offset.reset", "earliest");
         config.put("commit-strategy", "latest");
+        config.put("pausable", true);
         config.put("consumer-rebalance-listener.name", "seek-and-reset-listener");
 
         runApplication(config);

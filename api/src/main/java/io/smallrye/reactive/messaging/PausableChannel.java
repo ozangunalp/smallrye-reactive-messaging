@@ -39,6 +39,9 @@ public interface PausableChannel {
      * <p>
      * This is useful before performing operations that require no in-flight processing,
      * such as seeking a Kafka consumer to a new position or during graceful shutdown.
+     * <p>
+     * In-flight messages are only tracked when {@code graceful-shutdown} is enabled for the channel. Without it,
+     * this method pauses the channel and completes immediately, without waiting for in-flight messages.
      *
      * @return a {@link Uni} that completes when all in-flight messages
      *         have been acknowledged or negatively acknowledged
