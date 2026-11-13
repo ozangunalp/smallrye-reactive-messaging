@@ -162,4 +162,10 @@ public interface ProviderLogging extends BasicLogger {
     @LogMessage(level = Logger.Level.WARN)
     @Message(id = 246, value = "Draining channel '%s' timed out after %s, shutting down with in-flight messages (in flight: %s)")
     void drainTimedOut(String channel, Duration timeout, String inFlight);
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 247, value = "Method '%s' consumes the message type '%s'. Consuming connector-specific message types is deprecated and no longer supported: "
+            + "features that intercept messages (interceptors, observation, graceful shutdown) do not preserve them. "
+            + "Consume `Message<T>` and read the connector metadata, or inject the payload and the metadata instead")
+    void consumingSpecificMessageType(String method, String messageType);
 }
