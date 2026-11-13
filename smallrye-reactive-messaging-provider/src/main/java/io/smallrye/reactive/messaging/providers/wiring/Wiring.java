@@ -32,6 +32,7 @@ import io.smallrye.reactive.messaging.providers.AbstractMediator;
 import io.smallrye.reactive.messaging.providers.extension.*;
 import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderLogging;
+import io.smallrye.reactive.messaging.providers.impl.Configs;
 import io.smallrye.reactive.messaging.providers.impl.ConnectorConfig;
 import io.smallrye.reactive.messaging.providers.locals.ContextDecorator;
 
@@ -574,7 +575,9 @@ public class Wiring {
             Multi<? extends Message<?>> publisher = Multi.createFrom().publisher(emitter.getPublisher());
             for (PublisherDecorator decorator : getSortedInstances(decorators)) {
                 if (!(decorator instanceof ContextDecorator)) {
-                    publisher = decorator.decorate(publisher, List.of(configuration.name()), channelConfig);
+                    // Flag the config: an emitter channel is not a connector's incoming stream.
+                    publisher = decorator.decorate(publisher, List.of(configuration.name()),
+                            Configs.emitterChannel(channelConfig));
                 }
             }
             //noinspection ReactiveStreamsUnusedPublisher

@@ -177,8 +177,10 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
         registry.register(channel, (Class) emitterType, emitter);
 
         Multi<? extends Message<?>> multi = Multi.createFrom().publisher(emitter.getPublisher());
+        // Flag the config: an emitter channel is not a connector's incoming stream.
+        Config decoratorConfig = Configs.emitterChannel(config);
         for (PublisherDecorator decorator : getSortedInstances(publisherDecoratorInstance)) {
-            multi = decorator.decorate(multi, List.of(channel), config);
+            multi = decorator.decorate(multi, List.of(channel), decoratorConfig);
         }
         String connectorName = getConnectorName(channel, config, factories.getOutboundConnectors());
         // Register the upstream without a connector name: this is an outgoing connector channel,
@@ -195,8 +197,10 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
     void outgoing(String channel, Config config, Flow.Publisher<? extends Message<?>> source) {
         config = ConnectorConfig.wrap(ConnectorFactory.OUTGOING_PREFIX, channel, config);
         Multi<? extends Message<?>> multi = MultiUtils.publisher(source);
+        // Flag the config: this upstream feeds an outgoing channel, it is not a connector's incoming stream.
+        Config decoratorConfig = Configs.emitterChannel(config);
         for (PublisherDecorator decorator : getSortedInstances(publisherDecoratorInstance)) {
-            multi = decorator.decorate(multi, List.of(channel), config);
+            multi = decorator.decorate(multi, List.of(channel), decoratorConfig);
         }
         String connectorName = getConnectorName(channel, config, factories.getOutboundConnectors());
         // Register the upstream without a connector name: this is an outgoing connector channel,
