@@ -161,12 +161,12 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
     }
 
     @Override
-    public Cancellable subscribe(Function<O, Uni<Void>> consumer) {
+    public Cancellable subscribeAsync(Function<O, Uni<Void>> consumer) {
         return processAndConsume((payload, metadata) -> consumer.apply(payload)).subscribe();
     }
 
     @Override
-    public Cancellable subscribe(BiFunction<O, Metadata, Uni<Void>> consumer) {
+    public Cancellable subscribeAsync(BiFunction<O, Metadata, Uni<Void>> consumer) {
         return processAndConsume(consumer).subscribe();
     }
 

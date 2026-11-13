@@ -38,7 +38,7 @@ public class ChannelBindingExample {
     // <subscribe-async>
     public Cancellable consumeAsync(IncomingConnectorConfiguration config) {
         return factory.incoming(config, String.class)
-                .subscribe(payload -> {
+                .subscribeAsync(payload -> {
                     // Async processing, ack on Uni completion
                     return Uni.createFrom().item(payload)
                             .onItem().invoke(p -> System.out.println("Processed: " + p))

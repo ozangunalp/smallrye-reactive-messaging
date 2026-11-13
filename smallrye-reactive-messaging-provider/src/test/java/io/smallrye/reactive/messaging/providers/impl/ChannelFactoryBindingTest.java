@@ -12,7 +12,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 
 import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Message;
@@ -204,7 +203,7 @@ class ChannelFactoryBindingTest extends WeldTestBaseWithoutTails {
 
         List<Integer> received = new CopyOnWriteArrayList<>();
         Cancellable cancellable = factory.incoming(incomingConfig("test-in"), Integer.class)
-                .subscribe(payload -> {
+                .subscribeAsync(payload -> {
                     received.add(payload);
                     return Uni.createFrom().voidItem();
                 });
@@ -594,7 +593,7 @@ class ChannelFactoryBindingTest extends WeldTestBaseWithoutTails {
                     }
                     return Uni.createFrom().item("ok-" + payload);
                 })
-                .subscribe((Consumer<String>) received::add);
+                .subscribe(payload -> received.add(payload));
 
         await().untilAsserted(() -> assertThat(emitter.get()).isNotNull());
         emitter.get().emit(Message.of(2));
@@ -642,7 +641,7 @@ class ChannelFactoryBindingTest extends WeldTestBaseWithoutTails {
 
         List<Integer> received = new CopyOnWriteArrayList<>();
         Cancellable cancellable = factory.bind(source, Integer.class)
-                .subscribe((Consumer<Integer>) received::add);
+                .subscribe(payload -> received.add(payload));
 
         await().untilAsserted(() -> assertThat(emitter.get()).isNotNull());
 

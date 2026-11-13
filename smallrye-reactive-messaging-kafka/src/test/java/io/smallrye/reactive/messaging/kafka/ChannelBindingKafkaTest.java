@@ -7,7 +7,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.function.Consumer;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.IntegerDeserializer;
@@ -57,7 +56,7 @@ class ChannelBindingKafkaTest extends KafkaCompanionTestBase {
 
         List<Integer> received = new CopyOnWriteArrayList<>();
         Cancellable cancellable = factory.incoming(incomingConfig("test-in"), Integer.class)
-                .subscribe((Consumer<Integer>) received::add);
+                .subscribe(payload -> received.add(payload));
 
         await().atMost(Duration.ofSeconds(30))
                 .untilAsserted(() -> assertThat(received).hasSize(5));
@@ -99,7 +98,7 @@ class ChannelBindingKafkaTest extends KafkaCompanionTestBase {
 
         List<Integer> received = new CopyOnWriteArrayList<>();
         Cancellable cancellable = factory.incoming(incomingConfig("test-in"), Integer.class)
-                .subscribe(payload -> {
+                .subscribeAsync(payload -> {
                     received.add(payload);
                     return Uni.createFrom().voidItem();
                 });
@@ -120,7 +119,7 @@ class ChannelBindingKafkaTest extends KafkaCompanionTestBase {
         List<String> received = new CopyOnWriteArrayList<>();
         Cancellable cancellable = factory.incoming(incomingConfig("test-in"), Integer.class)
                 .process(i -> "val-" + i)
-                .subscribe((Consumer<String>) received::add);
+                .subscribe(payload -> received.add(payload));
 
         await().atMost(Duration.ofSeconds(30))
                 .untilAsserted(() -> assertThat(received).hasSize(5));
@@ -180,7 +179,7 @@ class ChannelBindingKafkaTest extends KafkaCompanionTestBase {
 
         List<Integer> received = new CopyOnWriteArrayList<>();
         Cancellable cancellable = factory.incoming(incomingConfig("test-in"), Integer.class)
-                .subscribe((Consumer<Integer>) received::add);
+                .subscribe(payload -> received.add(payload));
 
         companion.produceIntegers()
                 .usingGenerator(i -> new ProducerRecord<>(topic, i), 3);
@@ -235,7 +234,7 @@ class ChannelBindingKafkaTest extends KafkaCompanionTestBase {
         List<String> received = new CopyOnWriteArrayList<>();
         Cancellable cancellable = factory.incoming(incomingConfig("test-in"), Integer.class)
                 .processAsync(i -> Uni.createFrom().item("async-" + i))
-                .subscribe((Consumer<String>) received::add);
+                .subscribe(payload -> received.add(payload));
 
         await().atMost(Duration.ofSeconds(30))
                 .untilAsserted(() -> assertThat(received).hasSize(5));
@@ -256,7 +255,7 @@ class ChannelBindingKafkaTest extends KafkaCompanionTestBase {
 
         List<Integer> received = new CopyOnWriteArrayList<>();
         Cancellable cancellable = factory.incoming(incomingConfig("test-in"), Integer.class)
-                .subscribe((Consumer<Integer>) received::add);
+                .subscribe(payload -> received.add(payload));
 
         await().atMost(Duration.ofSeconds(30))
                 .untilAsserted(() -> assertThat(received).hasSize(5));
@@ -284,7 +283,7 @@ class ChannelBindingKafkaTest extends KafkaCompanionTestBase {
                 .topic(topic)
                 .groupId(UUID.randomUUID().toString())
                 .build(), Integer.class)
-                .subscribe((Consumer<Integer>) received::add);
+                .subscribe(payload -> received.add(payload));
 
         await().atMost(Duration.ofSeconds(30))
                 .untilAsserted(() -> assertThat(received).hasSize(5));

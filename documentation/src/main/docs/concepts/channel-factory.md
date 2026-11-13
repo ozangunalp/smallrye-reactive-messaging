@@ -56,7 +56,7 @@ Access message metadata alongside the payload:
 
 ### Async Subscription
 
-For asynchronous processing, return a `Uni<Void>` — the message is acknowledged when the `Uni` completes:
+For asynchronous processing, use `subscribeAsync` and return a `Uni<Void>` — the message is acknowledged when the `Uni` completes:
 
 ``` java
 {{ insert('channelfactory/ChannelBindingExample.java', 'subscribe-async') }}
@@ -110,7 +110,8 @@ so a channel with the same name can be created again.
 | `subscribe()` | Acknowledge and discard each message |
 | `subscribe(Consumer)` | Process payload, auto-ack |
 | `subscribe(BiConsumer)` | Process payload and metadata, auto-ack |
-| `subscribe(Function<T, Uni<Void>>)` | Async processing, ack on completion |
+| `subscribeAsync(Function<T, Uni<Void>>)` | Async processing, ack on completion |
+| `subscribeAsync(BiFunction<T, Metadata, Uni<Void>>)` | Async processing with metadata, ack on completion |
 | `blocking()` / `blocking(concurrency)` | Dispatch to worker threads |
 | `blocking(executor)` / `blocking(executor, concurrency)` | Dispatch to custom executor |
 | `process(Function)` / `processAsync(Function)` | Add a transformation step, applied to the output of the previous one |

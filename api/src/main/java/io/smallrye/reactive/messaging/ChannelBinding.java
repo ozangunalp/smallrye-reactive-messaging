@@ -68,24 +68,27 @@ public interface ChannelBinding<I, O> {
     Cancellable subscribe(BiConsumer<O, Metadata> consumer);
 
     /**
-     * Convenience for {@code .process(consumer).subscribe()}.
+     * Convenience for {@code .processAsync(consumer).subscribe()}.
      * Adds the consumer as the last processing step and subscribes, acknowledging each message after
      * the returned {@link Uni} completes.
+     * <p>
+     * Named differently from {@link #subscribe(Consumer)}, like {@link #process(Function)} and
+     * {@link #processAsync(Function)}, so that a lambda always matches a single method.
      *
      * @param consumer the async payload consumer returning a {@link Uni}
      * @return a {@link Cancellable} to cancel the subscription
      */
-    Cancellable subscribe(Function<O, Uni<Void>> consumer);
+    Cancellable subscribeAsync(Function<O, Uni<Void>> consumer);
 
     /**
-     * Convenience for {@code .process(consumer).subscribe()}.
+     * Convenience for {@code .processAsync(consumer).subscribe()}.
      * Adds the consumer as the last processing step and subscribes, acknowledging each message after
      * the returned {@link Uni} completes.
      *
      * @param consumer the async payload and metadata consumer returning a {@link Uni}
      * @return a {@link Cancellable} to cancel the subscription
      */
-    Cancellable subscribe(BiFunction<O, Metadata, Uni<Void>> consumer);
+    Cancellable subscribeAsync(BiFunction<O, Metadata, Uni<Void>> consumer);
 
     /**
      * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on a worker
