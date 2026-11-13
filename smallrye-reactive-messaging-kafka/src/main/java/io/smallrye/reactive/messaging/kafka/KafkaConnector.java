@@ -202,11 +202,17 @@ public class KafkaConnector implements InboundConnector, OutboundConnector, Heal
 
     @Override
     public CompletionStage<Void> prepareCloseIncoming(String channel) {
+        // A channel has one source per partition (`partitions` attribute): prepare all of them.
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         List<KafkaSource<?, ?>> channelSources = sources.get(channel);
-        if (channelSources != null && !channelSources.isEmpty()) {
-            return channelSources.get(0).preShutdown();
+        if (channelSources != null) {
+            channelSources.forEach(source -> futures.add(source.preShutdown().toCompletableFuture()));
         }
-        return CompletableFuture.completedFuture(null);
+        List<KafkaShareGroupSource<?, ?>> channelShareSources = shareGroupSources.get(channel);
+        if (channelShareSources != null) {
+            channelShareSources.forEach(source -> futures.add(source.preShutdown().toCompletableFuture()));
+        }
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     }
 
     @Override
@@ -451,15 +457,15 @@ public class KafkaConnector implements InboundConnector, OutboundConnector, Heal
     }
 
     public Set<String> getConsumerChannels() {
-        return sources.keySet();
+        return Set.copyOf(sources.keySet());
     }
 
     public Set<String> getShareConsumerChannels() {
-        return shareGroupSources.keySet();
+        return Set.copyOf(shareGroupSources.keySet());
     }
 
     public Set<String> getProducerChannels() {
-        return sinks.keySet();
+        return Set.copyOf(sinks.keySet());
     }
 
     @SuppressWarnings("unchecked")

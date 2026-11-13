@@ -80,6 +80,47 @@ public class GracefulShutdownTest extends KafkaCompanionTestBase {
     }
 
     @Test
+    public void testLatestCommitStrategyCommitsOnShutdown() {
+        String group = "test-graceful-shutdown-latest";
+
+        addBeans(SlowConsumerBean.class);
+
+        // No graceful-shutdown property: Kafka enables it by default.
+        // Remove the test-harness default (KafkaMapBasedConfig forces graceful-shutdown=false for incoming channels).
+        // KafkaLatestCommit.terminate() flushes the latest offsets through the polling thread.
+        KafkaMapBasedConfig config = kafkaConfig("mp.messaging.incoming.data");
+        config.remove("mp.messaging.incoming.data.graceful-shutdown");
+        config.put("group.id", group);
+        config.put("topic", topic);
+        config.put("value.deserializer", IntegerDeserializer.class.getName());
+        config.put("enable.auto.commit", "false");
+        config.put("auto.offset.reset", "earliest");
+        config.put("commit-strategy", "latest");
+
+        companion.produceIntegers()
+                .usingGenerator(i -> new ProducerRecord<>(topic, i), 10);
+
+        runApplication(config);
+
+        SlowConsumerBean bean = get(SlowConsumerBean.class);
+        await().atMost(30, TimeUnit.SECONDS).until(() -> bean.getCount() >= 5);
+
+        // Get direct reference before container shutdown
+        List<Integer> received = bean.getReceived();
+
+        container.close();
+        container = null;
+
+        int countAfterShutdown = received.size();
+        TopicPartition tp = new TopicPartition(topic, 0);
+        await().untilAsserted(() -> {
+            OffsetAndMetadata offset = companion.consumerGroups().offsets(group, tp);
+            assertThat(offset).isNotNull();
+            assertThat(offset.offset()).isEqualTo(countAfterShutdown);
+        });
+    }
+
+    @Test
     public void testGracefulShutdownDrainsEmitterBufferedMessages() {
         addBeans(EmitterProducerBean.class);
 

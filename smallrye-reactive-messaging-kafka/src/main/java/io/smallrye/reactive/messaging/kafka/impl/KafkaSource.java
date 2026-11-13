@@ -10,6 +10,7 @@ import static io.smallrye.reactive.messaging.kafka.impl.RebalanceListeners.findM
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -56,6 +57,7 @@ public class KafkaSource<K, V> {
     private final boolean isCloudEventEnabled;
     private final String channel;
     private volatile boolean subscribed;
+    private final AtomicBoolean preShutdownDone = new AtomicBoolean();
     private final KafkaSourceHealth health;
 
     private final String group;
@@ -429,6 +431,10 @@ public class KafkaSource<K, V> {
     }
 
     public CompletionStage<Void> preShutdown() {
+        // Called by the connector's prepareCloseIncoming and again by closeQuietly: terminate the handlers only once.
+        if (!preShutdownDone.compareAndSet(false, true)) {
+            return CompletableFuture.completedStage(null);
+        }
         try {
             this.commitHandler.terminate(configuration.getGracefulShutdown());
             this.failureHandler.terminate();

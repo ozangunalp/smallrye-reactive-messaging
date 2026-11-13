@@ -2,6 +2,7 @@ package io.smallrye.reactive.messaging.kafka.commit;
 
 import static io.smallrye.reactive.messaging.kafka.i18n.KafkaLogging.log;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -92,7 +93,9 @@ public class KafkaLatestCommit extends ContextHolder implements KafkaCommitHandl
             });
             if (!toCommit.isEmpty()) {
                 try {
-                    consumer.unwrap().commitSync(toCommit);
+                    // Commit on the polling thread: the Kafka consumer is not thread-safe and the poll loop is still running.
+                    consumer.commit(toCommit)
+                            .await().atMost(Duration.ofMillis(getTimeoutInMillis()));
                 } catch (Exception e) {
                     log.failedToCommit(toCommit, e);
                 }
@@ -102,7 +105,9 @@ public class KafkaLatestCommit extends ContextHolder implements KafkaCommitHandl
 
     @Override
     public <K, V> Uni<Void> handle(IncomingKafkaRecord<K, V> record) {
-        return Uni.createFrom().voidItem().invoke(() -> {
+        // Update the offsets on the captured context (the only one accessing the map, see terminate),
+        // then complete on the message context.
+        return Uni.createFrom().voidItem().runSubscriptionOn(this::runOnContext).invoke(() -> {
             Map<TopicPartition, OffsetAndMetadata> map = new HashMap<>();
             TopicPartition key = TopicPartitions.getTopicPartition(record);
             Long last = offsets.get(key);
@@ -113,6 +118,6 @@ public class KafkaLatestCommit extends ContextHolder implements KafkaCommitHandl
                         .subscribe().with(ignored -> {
                         }, throwable -> log.failedToCommitAsync(key, record.getOffset() + 1, throwable));
             }
-        }).runSubscriptionOn(record::runOnMessageContext);
+        }).emitOn(record::runOnMessageContext);
     }
 }
