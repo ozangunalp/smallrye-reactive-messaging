@@ -35,6 +35,7 @@ public class InternalChannelRegistry implements ChannelRegistry {
     private final Map<String, PausableChannel> pausables = new ConcurrentHashMap<>();
     private final Map<String, String> incomingConnectors = new ConcurrentHashMap<>();
     private final Map<String, String> outgoingConnectors = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> incomingConnectorChannels = new ConcurrentHashMap<>();
 
     @Override
     public Flow.Publisher<? extends Message<?>> register(String name,
@@ -209,6 +210,29 @@ public class InternalChannelRegistry implements ChannelRegistry {
     @Override
     public String getOutgoingConnectorName(String channel) {
         return outgoingConnectors.get(channel);
+    }
+
+    /**
+     * Records the names under which the connector knows the parts of an incoming channel. A channel configured with
+     * {@code concurrency} is consumed through several indexed connector channels ({@code channel$1}, {@code channel$2},
+     * ...), while it is registered under its base name.
+     *
+     * @param channel the channel name, as registered
+     * @param connectorChannels the channel names the connector uses
+     */
+    public void registerIncomingConnectorChannels(String channel, List<String> connectorChannels) {
+        Objects.requireNonNull(channel, msg.nameMustBeSet());
+        incomingConnectorChannels.put(channel, List.copyOf(connectorChannels));
+    }
+
+    /**
+     * @param channel the channel name, as registered
+     * @return the channel names the connector uses for this incoming channel: the indexed channels for a channel
+     *         configured with {@code concurrency}, the channel itself otherwise
+     */
+    public List<String> getIncomingConnectorChannels(String channel) {
+        Objects.requireNonNull(channel, msg.nameMustBeSet());
+        return incomingConnectorChannels.getOrDefault(channel, List.of(channel));
     }
 
     @Override

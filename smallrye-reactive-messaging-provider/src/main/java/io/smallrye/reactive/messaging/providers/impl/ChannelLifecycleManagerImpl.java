@@ -4,7 +4,9 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -22,7 +24,7 @@ import io.smallrye.reactive.messaging.ChannelLifecycleManager;
 import io.smallrye.reactive.messaging.ChannelRegistry;
 import io.smallrye.reactive.messaging.PausableChannel;
 import io.smallrye.reactive.messaging.connector.ConnectorLifecycle;
-import io.smallrye.reactive.messaging.providers.extension.PausableChannelDecorator;
+import io.smallrye.reactive.messaging.providers.extension.CompositePausableChannel;
 import io.smallrye.reactive.messaging.providers.i18n.ProviderLogging;
 
 @ApplicationScoped
@@ -148,9 +150,11 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             return Uni.createFrom().voidItem();
         }
 
+        // A channel configured with concurrency is drained as a whole (composite pausable under its name),
+        // then each indexed connector channel is prepared.
         return drainChannel(channel)
                 .emitOn(Infrastructure.getDefaultWorkerPool())
-                .call(() -> Uni.createFrom().completionStage(() -> connector.prepareCloseIncoming(channel)));
+                .call(() -> forEachConnectorChannel(incomingConnectorChannels(channel), connector::prepareCloseIncoming));
     }
 
     @Override
@@ -176,8 +180,31 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             return Uni.createFrom().voidItem();
         }
 
-        return Uni.createFrom().completionStage(() -> connector.closeIncoming(channel))
+        return forEachConnectorChannel(incomingConnectorChannels(channel), connector::closeIncoming)
                 .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
+    }
+
+    /**
+     * @return the channel names the connector uses for the given incoming channel: the indexed channels for a channel
+     *         configured with {@code concurrency}, the channel itself otherwise
+     */
+    private List<String> incomingConnectorChannels(String channel) {
+        if (registry instanceof InternalChannelRegistry internal) {
+            return internal.getIncomingConnectorChannels(channel);
+        }
+        return List.of(channel);
+    }
+
+    private static Uni<Void> forEachConnectorChannel(List<String> connectorChannels,
+            Function<String, CompletionStage<Void>> hook) {
+        if (connectorChannels.size() == 1) {
+            String connectorChannel = connectorChannels.get(0);
+            return Uni.createFrom().completionStage(() -> hook.apply(connectorChannel));
+        }
+        List<Uni<Void>> calls = connectorChannels.stream()
+                .map(connectorChannel -> Uni.createFrom().completionStage(() -> hook.apply(connectorChannel)))
+                .toList();
+        return Uni.join().all(calls).andCollectFailures().replaceWithVoid();
     }
 
     @Override
@@ -240,9 +267,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
     }
 
     private static String inFlight(PausableChannel pausable) {
-        if (pausable instanceof PausableChannelDecorator.PauserChannel pauser) {
-            return String.valueOf(pauser.getInFlightCount());
-        }
-        return "unknown";
+        int count = CompositePausableChannel.inFlightCount(pausable);
+        return count < 0 ? "unknown" : String.valueOf(count);
     }
 }

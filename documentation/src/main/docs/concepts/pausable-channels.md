@@ -54,6 +54,12 @@ and pause or resume the channel as needed:
 !!!warning
     Pausable channels only work with back-pressure aware subscribers, with bounded downstream requests.
 
+### Channels with concurrency
+
+An incoming channel configured with `concurrency` is consumed through several indexed channels (`channel$1`, `channel$2`, ...).
+The `PausableChannel` registered under the channel name controls all of them: pausing, resuming or draining it applies to every indexed channel.
+Each indexed channel can still be controlled on its own, using its indexed name.
+
 ## Pause and Drain
 
 The `PausableChannel` interface provides a `pauseAndDrain()` method that pauses the channel

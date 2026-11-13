@@ -89,7 +89,8 @@ Phase 1: Prepare close incoming — prepareCloseIncoming()
   │
   └─ For each incoming channel (concurrently, up to 10):
        1. Pause and drain in-flight messages
-       2. Connector prepare-close (e.g., flush commits)
+       2. Connector prepare-close (e.g., flush commits),
+          once per indexed channel for a channel configured with concurrency
 
 Phase 2: Prepare close outgoing — prepareCloseOutgoing()
   │  (new requests rejected, emitters no longer receiving)

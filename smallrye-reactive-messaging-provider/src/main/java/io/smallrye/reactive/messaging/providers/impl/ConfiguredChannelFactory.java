@@ -30,6 +30,7 @@ import io.smallrye.reactive.messaging.EmitterConfiguration;
 import io.smallrye.reactive.messaging.EmitterFactory;
 import io.smallrye.reactive.messaging.MessageConverter;
 import io.smallrye.reactive.messaging.MessagePublisherProvider;
+import io.smallrye.reactive.messaging.PausableChannel;
 import io.smallrye.reactive.messaging.PausableChannelConfiguration;
 import io.smallrye.reactive.messaging.PublisherDecorator;
 import io.smallrye.reactive.messaging.SubscriberDecorator;
@@ -40,6 +41,7 @@ import io.smallrye.reactive.messaging.connector.IncomingConnectorConfiguration;
 import io.smallrye.reactive.messaging.connector.OutboundConnector;
 import io.smallrye.reactive.messaging.connector.OutgoingConnectorConfiguration;
 import io.smallrye.reactive.messaging.providers.DefaultEmitterConfiguration;
+import io.smallrye.reactive.messaging.providers.extension.CompositePausableChannel;
 import io.smallrye.reactive.messaging.providers.helpers.ConverterUtils;
 import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
 
@@ -343,6 +345,25 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
 
     }
 
+    /**
+     * A channel configured with {@code concurrency} is consumed through indexed channels, each with its own pausable
+     * channel, while the connector knows the indexed names. Register a composite pausable under the base name, so the
+     * logical channel can be paused and drained as a whole, and record the indexed names for the per-channel
+     * lifecycle hooks.
+     */
+    private void registerConcurrentChannel(String channel, List<String> indexedChannels) {
+        if (registry instanceof InternalChannelRegistry internal) {
+            internal.registerIncomingConnectorChannels(channel, indexedChannels);
+        }
+        List<PausableChannel> parts = indexedChannels.stream()
+                .map(registry::getPausable)
+                .filter(Objects::nonNull)
+                .toList();
+        if (!parts.isEmpty() && registry.getPausable(channel) == null) {
+            registry.register(channel, new CompositePausableChannel(parts));
+        }
+    }
+
     void register(Map<String, ConnectorConfig> incomings, Map<String, ConnectorConfig> outgoings) {
         try {
             for (Map.Entry<String, ConnectorConfig> entry : incomings.entrySet()) {
@@ -353,11 +374,14 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
                     if (concurrency <= 1) {
                         incoming(channel, config);
                     } else {
+                        List<String> indexedChannels = new ArrayList<>();
                         for (int i = 0; i < concurrency; i++) {
                             ConcurrencyConnectorConfig indexedConfig = new ConcurrencyConnectorConfig(config, i + 1);
                             String indexedChannel = indexedConfig.getIndexedChannel();
                             incoming(channel, indexedChannel, indexedConfig);
+                            indexedChannels.add(indexedChannel);
                         }
+                        registerConcurrentChannel(channel, indexedChannels);
                     }
                 } else {
                     log.incomingChannelDisabled(channel);
