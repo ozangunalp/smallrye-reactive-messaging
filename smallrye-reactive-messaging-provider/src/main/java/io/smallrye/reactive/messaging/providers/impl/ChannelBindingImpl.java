@@ -42,33 +42,35 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
     }
 
     private Multi<? extends Message<?>> applyPipeline() {
-        Multi<? extends Message<?>> multi = upstream.plug(m -> executor != null ? m.emitOn(executor) : m);
-        if (processor != null) {
-            Function<Message<?>, Multi<? extends Message<?>>> processMessage = this::processMessage;
-            multi = multi.plug(m -> {
-                if (concurrency > 1) {
-                    return m.onItem().transformToMulti(processMessage).merge(concurrency);
-                } else {
-                    return m.onItem().transformToMulti(processMessage).concatenate();
-                }
-            });
+        if (processor == null) {
+            // Nothing to process: only move the delivery to the executor, if any.
+            return executor != null ? upstream.emitOn(executor) : upstream;
         }
-        return multi;
+        Function<Message<?>, Multi<? extends Message<?>>> processMessage = this::processMessage;
+        return upstream.plug(m -> {
+            if (concurrency > 1) {
+                return m.onItem().transformToMulti(processMessage).merge(concurrency);
+            } else {
+                return m.onItem().transformToMulti(processMessage).concatenate();
+            }
+        });
     }
 
     @SuppressWarnings("unchecked")
     private Multi<? extends Message<?>> processMessage(Message<?> msg) {
-        try {
-            I payload = (I) msg.getPayload();
-            return Multi.createFrom().uni(processor.apply(payload, msg.getMetadata())
-                    .onItem().transform(msg::withPayload))
-                    .onFailure().recoverWithMulti(e -> Multi.createFrom()
-                            .completionStage(msg.nack(e))
-                            .onItem().transformToMultiAndConcatenate(v -> Multi.createFrom().empty()));
-        } catch (Exception e) {
-            return Multi.createFrom().completionStage(msg.nack(e))
-                    .onItem().transformToMultiAndConcatenate(v -> Multi.createFrom().empty());
+        I payload = (I) msg.getPayload();
+        // Deferred so the processor runs when the inner stream is subscribed, not while the upstream emits.
+        // Exceptions thrown by the processor become failures and nack the message.
+        Uni<O> processing = Uni.createFrom().deferred(() -> processor.apply(payload, msg.getMetadata()));
+        if (executor != null) {
+            // Each message is processed on the executor, so merge(concurrency) runs up to `concurrency` at once,
+            // and concatenate() keeps them sequential and ordered.
+            processing = processing.runSubscriptionOn(executor);
         }
+        return Multi.createFrom().uni(processing.onItem().transform(msg::withPayload))
+                .onFailure().recoverWithMulti(e -> Multi.createFrom()
+                        .completionStage(msg.nack(e))
+                        .onItem().transformToMultiAndConcatenate(v -> Multi.createFrom().empty()));
     }
 
     @SuppressWarnings("unchecked")
@@ -170,8 +172,48 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
     @Override
     @SuppressWarnings({ "unchecked" })
     public Cancellable to(Flow.Subscriber<? extends Message<?>> subscriber) {
-        Flow.Subscriber<Message<?>> s = (Flow.Subscriber<Message<?>>) subscriber;
-        return applyPipeline().subscribe().with(s::onSubscribe, s::onNext, s::onError, s::onComplete);
+        CompletingOnCancelSubscriber s = new CompletingOnCancelSubscriber((Flow.Subscriber<Message<?>>) subscriber);
+        Cancellable cancellable = applyPipeline().subscribe()
+                .with(s.downstream::onSubscribe, s::onNext, s::onError, s::onComplete);
+        return () -> {
+            cancellable.cancel();
+            // Cancelling the binding must not leave the connector sink open.
+            s.onComplete();
+        };
+    }
+
+    /**
+     * Forwards signals to the downstream subscriber, guaranteeing a single terminal signal and serial delivery even
+     * when completion comes from a cancellation racing with an in-flight {@code onNext}.
+     */
+    private static final class CompletingOnCancelSubscriber {
+
+        private final Flow.Subscriber<Message<?>> downstream;
+        private boolean terminated;
+
+        CompletingOnCancelSubscriber(Flow.Subscriber<Message<?>> downstream) {
+            this.downstream = downstream;
+        }
+
+        synchronized void onNext(Message<?> item) {
+            if (!terminated) {
+                downstream.onNext(item);
+            }
+        }
+
+        synchronized void onError(Throwable failure) {
+            if (!terminated) {
+                terminated = true;
+                downstream.onError(failure);
+            }
+        }
+
+        synchronized void onComplete() {
+            if (!terminated) {
+                terminated = true;
+                downstream.onComplete();
+            }
+        }
     }
 
 }

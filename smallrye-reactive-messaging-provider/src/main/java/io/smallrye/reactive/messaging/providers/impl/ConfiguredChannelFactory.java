@@ -179,7 +179,9 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
             multi = decorator.decorate(multi, List.of(channel), config);
         }
         String connectorName = getConnectorName(channel, config, factories.getOutboundConnectors());
-        registry.register(channel, connectorName, multi, false);
+        // Register the upstream without a connector name: this is an outgoing connector channel,
+        // so it must not be known as an incoming one (the lifecycle manager would drain it in phase 1).
+        registry.register(channel, multi, false);
         Flow.Subscriber<? extends Message<?>> subscriber = createSubscriber(channel, connectorName, config);
         registry.register(channel, connectorName, subscriber, false);
 
@@ -195,7 +197,9 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
             multi = decorator.decorate(multi, List.of(channel), config);
         }
         String connectorName = getConnectorName(channel, config, factories.getOutboundConnectors());
-        registry.register(channel, connectorName, multi, false);
+        // Register the upstream without a connector name: this is an outgoing connector channel,
+        // so it must not be known as an incoming one (the lifecycle manager would drain it in phase 1).
+        registry.register(channel, multi, false);
         Flow.Subscriber<? extends Message<?>> subscriber = createSubscriber(channel, connectorName, config);
         registry.register(channel, connectorName, subscriber, false);
 

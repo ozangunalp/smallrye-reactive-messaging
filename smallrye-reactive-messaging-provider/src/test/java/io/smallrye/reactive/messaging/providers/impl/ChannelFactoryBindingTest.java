@@ -6,9 +6,12 @@ import static org.awaitility.Awaitility.await;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import org.eclipse.microprofile.reactive.messaging.Emitter;
@@ -21,6 +24,7 @@ import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.subscription.Cancellable;
 import io.smallrye.reactive.messaging.ChannelFactory;
+import io.smallrye.reactive.messaging.ChannelLifecycleManager;
 import io.smallrye.reactive.messaging.ChannelRegistry;
 import io.smallrye.reactive.messaging.MutinyEmitter;
 import io.smallrye.reactive.messaging.WeldTestBaseWithoutTails;
@@ -617,5 +621,101 @@ class ChannelFactoryBindingTest extends WeldTestBaseWithoutTails {
             Thread.currentThread().interrupt();
         }
         assertThat(connector.list()).containsExactly("v-1", "v-2");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void outgoingEmitterIsNotDrainedWhenClosingIncomingChannels() {
+        initialize();
+
+        ChannelFactory factory = get(ChannelFactory.class);
+        ChannelRegistry registry = get(ChannelRegistry.class);
+        MyDummyConnector connector = container.select(MyDummyConnector.class, ConnectorLiteral.of("smallrye-dummy")).get();
+
+        // The dummy connector is both inbound and outbound.
+        Emitter<String> emitter = factory.outgoing(outgoingConfig("emitter-out"), Emitter.class);
+
+        assertThat(registry.getOutgoingConnectorName("emitter-out")).isEqualTo("smallrye-dummy");
+        assertThat(registry.getIncomingConnectorName("emitter-out")).isNull();
+
+        // Phase 1 only concerns incoming channels: the emitter must still accept messages afterwards.
+        get(ChannelLifecycleManager.class).prepareCloseIncoming();
+
+        emitter.send("after-phase-1");
+        await().untilAsserted(() -> assertThat(connector.list()).contains("after-phase-1"));
+    }
+
+    @Test
+    void blockingWithConcurrencyProcessesMessagesInParallel() {
+        initialize();
+
+        ChannelFactory factory = get(ChannelFactory.class);
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+
+        // Each invocation waits until 4 invocations run at the same time; sequential processing would time out.
+        CountDownLatch allRunning = new CountDownLatch(4);
+        List<Boolean> reachedTogether = new CopyOnWriteArrayList<>();
+        Multi<Message<?>> source = Multi.createFrom().range(0, 4).map(Message::of);
+
+        Cancellable cancellable = factory.bind(source, Integer.class)
+                .blocking(executor, 4)
+                .subscribe(payload -> {
+                    allRunning.countDown();
+                    try {
+                        reachedTogether.add(allRunning.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+
+        await().untilAsserted(() -> assertThat(reachedTogether).hasSize(4).containsOnly(true));
+        cancellable.cancel();
+        executor.shutdown();
+    }
+
+    @Test
+    void toCancelCompletesTheSink() {
+        initialize();
+
+        ChannelFactory factory = get(ChannelFactory.class);
+
+        var emitter = new java.util.concurrent.atomic.AtomicReference<io.smallrye.mutiny.subscription.MultiEmitter<? super Message<?>>>();
+        Multi<Message<?>> source = Multi.createFrom().emitter(e -> emitter.set(e));
+
+        List<Object> received = new CopyOnWriteArrayList<>();
+        AtomicInteger completions = new AtomicInteger();
+        Flow.Subscriber<Message<?>> sink = new Flow.Subscriber<>() {
+            @Override
+            public void onSubscribe(Flow.Subscription subscription) {
+                subscription.request(Long.MAX_VALUE);
+            }
+
+            @Override
+            public void onNext(Message<?> item) {
+                received.add(item.getPayload());
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+            }
+
+            @Override
+            public void onComplete() {
+                completions.incrementAndGet();
+            }
+        };
+
+        Cancellable cancellable = factory.bind(source, Integer.class).to(sink);
+
+        await().untilAsserted(() -> assertThat(emitter.get()).isNotNull());
+        emitter.get().emit(Message.of(1));
+        await().untilAsserted(() -> assertThat(received).containsExactly(1));
+
+        cancellable.cancel();
+        assertThat(completions).hasValue(1);
+
+        // A second cancel must not send a second terminal signal.
+        cancellable.cancel();
+        assertThat(completions).hasValue(1);
     }
 }
