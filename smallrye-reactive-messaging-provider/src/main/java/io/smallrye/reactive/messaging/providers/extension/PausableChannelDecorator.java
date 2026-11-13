@@ -70,13 +70,14 @@ public class PausableChannelDecorator implements PublisherDecorator, SubscriberD
                 .orElse(10000);
 
         Runnable onComplete = null;
-        List<MessagePublisherProvider<?>> emitters = registry.getEmitters(channelName.get(0));
-        if (!emitters.isEmpty()) {
-            onComplete = emitters.get(0)::complete;
+        String emitterChannel = channelName.get(0);
+        if (!registry.getEmitters(emitterChannel).isEmpty()) {
+            // Resolved when draining, so every emitter registered for the channel is completed.
+            onComplete = () -> completeEmitters(registry.getEmitters(emitterChannel));
         }
 
         DemandPauser pauser = new DemandPauser();
-        PauserChannel pauserChannel = new PauserChannel(pauser, drainTimeoutMs, onComplete);
+        PauserChannel pauserChannel = new PauserChannel(pauser, drainTimeoutMs, onComplete, gracefulShutdown);
         for (String name : channelName) {
             registry.register(name, pauserChannel);
         }
@@ -92,9 +93,29 @@ public class PausableChannelDecorator implements PublisherDecorator, SubscriberD
         Multi<? extends Message<?>> result = demandPausing.using(pauser);
         if (gracefulShutdown) {
             return result.onItem().transform(pauserChannel::trackMessage)
-                    .onCompletion().invoke(pauserChannel::markUpstreamCompleted);
+                    .onSubscription().invoke(pauserChannel::markSubscribed)
+                    .onTermination().invoke(pauserChannel::markUpstreamCompleted);
         }
         return result;
+    }
+
+    static void completeEmitters(List<MessagePublisherProvider<?>> emitters) {
+        RuntimeException failure = null;
+        for (MessagePublisherProvider<?> emitter : emitters) {
+            try {
+                emitter.complete();
+            } catch (RuntimeException e) {
+                // Keep completing the other emitters, report the first failure afterwards.
+                if (failure == null) {
+                    failure = e;
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
     BackPressureStrategy getBackPressureStrategy(PausableBufferStrategy pausableBufferStrategy) {
@@ -117,12 +138,26 @@ public class PausableChannelDecorator implements PublisherDecorator, SubscriberD
         private final AtomicInteger wip = new AtomicInteger();
         private final AtomicReference<CompletableFuture<Void>> drainFuture = new AtomicReference<>();
         private final AtomicBoolean upstreamCompleted = new AtomicBoolean();
+        private final AtomicBoolean subscribed = new AtomicBoolean();
         private final Runnable onComplete;
+        private final boolean tracking;
 
         public PauserChannel(DemandPauser pauser, int drainTimeoutMs, Runnable onComplete) {
+            this(pauser, drainTimeoutMs, onComplete, true);
+        }
+
+        /**
+         * @param pauser the demand pauser of the channel
+         * @param drainTimeoutMs the drain timeout, in milliseconds
+         * @param onComplete completes the emitters of the channel, {@code null} if the channel is not fed by emitters
+         * @param tracking whether in-flight messages are tracked ({@code graceful-shutdown} enabled). Without tracking,
+         *        {@link #pauseAndDrain()} does not wait.
+         */
+        public PauserChannel(DemandPauser pauser, int drainTimeoutMs, Runnable onComplete, boolean tracking) {
             this.pauser = pauser;
             this.drainTimeoutMs = drainTimeoutMs;
             this.onComplete = onComplete;
+            this.tracking = tracking;
         }
 
         @Override
@@ -150,27 +185,47 @@ public class PausableChannelDecorator implements PublisherDecorator, SubscriberD
             return Duration.ofMillis(drainTimeoutMs);
         }
 
+        /**
+         * @return the number of messages delivered downstream and not yet acknowledged or negatively acknowledged,
+         *         always {@code 0} when in-flight messages are not tracked
+         */
+        public int getInFlightCount() {
+            return wip.get();
+        }
+
         @Override
         public Uni<Void> pauseAndDrain() {
             if (onComplete != null) {
+                // Emitter channel: complete the emitters so buffered messages are flushed, then wait until the
+                // completion has gone through the stream (all messages emitted) and every message is processed.
                 onComplete.run();
                 resume();
+                if (!tracking || !subscribed.get()) {
+                    // Nothing tracked, or nobody consumes the stream so the completion will never be observed.
+                    return Uni.createFrom().voidItem();
+                }
             } else {
+                // Incoming channel: stop the flow, then wait for the messages already delivered.
                 pause();
+                if (!tracking) {
+                    return Uni.createFrom().voidItem();
+                }
                 upstreamCompleted.set(true);
             }
             return waitForDrain();
         }
 
         private Uni<Void> waitForDrain() {
-            if (wip.get() == 0) {
-                return Uni.createFrom().voidItem();
-            }
             CompletableFuture<Void> future = drainFuture.updateAndGet(f -> f != null ? f : new CompletableFuture<>());
-            if (wip.get() == 0) {
-                future.complete(null);
-            }
+            // The conditions may have been reached before the future was installed: re-check now.
+            // Every state change (wip reaching 0, upstream completion) calls tryCompleteDrain after updating its
+            // state, so whichever happens last completes the future.
+            tryCompleteDrain();
             return Uni.createFrom().completionStage(future);
+        }
+
+        void markSubscribed() {
+            subscribed.set(true);
         }
 
         void markUpstreamCompleted() {

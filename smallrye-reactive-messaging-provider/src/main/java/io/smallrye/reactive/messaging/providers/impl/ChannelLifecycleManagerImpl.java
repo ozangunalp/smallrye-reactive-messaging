@@ -15,12 +15,15 @@ import jakarta.inject.Inject;
 
 import org.jboss.logging.Logger;
 
+import io.smallrye.mutiny.TimeoutException;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.infrastructure.Infrastructure;
 import io.smallrye.reactive.messaging.ChannelLifecycleManager;
 import io.smallrye.reactive.messaging.ChannelRegistry;
 import io.smallrye.reactive.messaging.PausableChannel;
 import io.smallrye.reactive.messaging.connector.ConnectorLifecycle;
+import io.smallrye.reactive.messaging.providers.extension.PausableChannelDecorator;
+import io.smallrye.reactive.messaging.providers.i18n.ProviderLogging;
 
 @ApplicationScoped
 public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
@@ -222,10 +225,24 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             Duration timeout = pausable.getDrainTimeout();
             return pausable.pauseAndDrain()
                     .ifNoItem().after(timeout).fail()
+                    .onFailure().invoke(failure -> {
+                        if (failure instanceof TimeoutException) {
+                            ProviderLogging.log.drainTimedOut(channel, timeout, inFlight(pausable));
+                        } else {
+                            log.warnf(failure, "Failed to drain channel '%s'", channel);
+                        }
+                    })
                     .onFailure().recoverWithNull();
         } catch (Exception e) {
             log.warnf(e, "Failed to drain channel '%s'", channel);
             return Uni.createFrom().voidItem();
         }
+    }
+
+    private static String inFlight(PausableChannel pausable) {
+        if (pausable instanceof PausableChannelDecorator.PauserChannel pauser) {
+            return String.valueOf(pauser.getInFlightCount());
+        }
+        return "unknown";
     }
 }

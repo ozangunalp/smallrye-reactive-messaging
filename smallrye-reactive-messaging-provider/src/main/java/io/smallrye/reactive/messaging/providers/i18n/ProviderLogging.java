@@ -1,6 +1,7 @@
 package io.smallrye.reactive.messaging.providers.i18n;
 
 import java.lang.invoke.MethodHandles;
+import java.time.Duration;
 import java.util.Set;
 
 import jakarta.enterprise.inject.spi.Bean;
@@ -157,4 +158,8 @@ public interface ProviderLogging extends BasicLogger {
     @LogMessage(level = Logger.Level.ERROR)
     @Message(id = 245, value = "Error in channel binding subscription")
     void channelBindingSubscriptionError(@Cause Throwable t);
+
+    @LogMessage(level = Logger.Level.WARN)
+    @Message(id = 246, value = "Draining channel '%s' timed out after %s, shutting down with in-flight messages (in flight: %s)")
+    void drainTimedOut(String channel, Duration timeout, String inFlight);
 }
