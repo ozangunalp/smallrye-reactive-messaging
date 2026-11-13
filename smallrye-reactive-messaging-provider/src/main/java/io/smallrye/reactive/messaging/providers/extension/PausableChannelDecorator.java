@@ -63,10 +63,10 @@ public class PausableChannelDecorator implements PublisherDecorator, SubscriberD
                 .getOptionalValue(PausableChannelConfiguration.BUFFER_STRATEGY_PROPERTY, PausableBufferStrategy.class)
                 .orElse(null);
         boolean gracefulShutdown = channelConfig
-                .getOptionalValue("graceful-shutdown", Boolean.class)
+                .getOptionalValue(PausableChannelConfiguration.GRACEFUL_SHUTDOWN_PROPERTY, Boolean.class)
                 .orElse(false);
         int drainTimeoutMs = channelConfig
-                .getOptionalValue("graceful-shutdown.drain-timeout", Integer.class)
+                .getOptionalValue(PausableChannelConfiguration.GRACEFUL_SHUTDOWN_DRAIN_TIMEOUT_PROPERTY, Integer.class)
                 .orElse(10000);
 
         Runnable onComplete = null;

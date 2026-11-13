@@ -23,6 +23,24 @@ This works for both incoming and outgoing channels:
 mp.messaging.outgoing.out.graceful-shutdown=true
 ```
 
+### Default Value
+
+For incoming channels, the default depends on the connector.
+A connector can declare its own default for `graceful-shutdown`; the framework uses it when the property is not set.
+The Kafka connector enables graceful shutdown by default, while the other connectors disable it.
+For outgoing channels, graceful shutdown is disabled unless the property is set.
+
+The value is resolved in this order: the channel property, the connector-level property (`mp.messaging.connector.<connector>.graceful-shutdown`), then the connector's default.
+To disable graceful shutdown for every Kafka channel:
+
+```properties
+mp.messaging.connector.smallrye-kafka.graceful-shutdown=false
+```
+
+!!! note "Implementing a connector"
+    Connectors that declare a default for `graceful-shutdown` should override `InboundConnector#isGracefulShutdownEnabled(Config)`
+    so the declared default applies, for example by delegating to the generated configuration class.
+
 ### Drain Timeout
 
 The drain timeout controls how long the framework waits for in-flight messages to complete.
@@ -132,5 +150,5 @@ This is useful for operations that require no in-flight processing, such as seek
 
 | Property | Type | Default | Description |
 |---|---|---|---|
-| `graceful-shutdown` | boolean | `false` | Enable graceful shutdown for the channel |
+| `graceful-shutdown` | boolean | connector-specific (`true` for Kafka incoming channels, `false` otherwise) | Enable graceful shutdown for the channel |
 | `graceful-shutdown.drain-timeout` | int (ms) | `10000` | Maximum time to wait for in-flight messages to drain |

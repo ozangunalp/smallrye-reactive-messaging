@@ -259,6 +259,16 @@ public class KafkaConnector implements InboundConnector, OutboundConnector, Heal
         this.vertx = executionHolder.vertx();
     }
 
+    /**
+     * Kafka declares {@code graceful-shutdown} with a default of {@code true}, so the generated configuration is used to
+     * resolve the effective value (channel, then connector-level, then the declared default).
+     */
+    @Override
+    public boolean isGracefulShutdownEnabled(Config config) {
+        Config channelConfiguration = ConfigHelper.retrieveChannelConfiguration(configurations, config);
+        return new KafkaConnectorIncomingConfiguration(channelConfiguration).getGracefulShutdown();
+    }
+
     @Override
     public Flow.Publisher<? extends Message<?>> getPublisher(Config config) {
         Config channelConfiguration = ConfigHelper.retrieveChannelConfiguration(configurations, config);

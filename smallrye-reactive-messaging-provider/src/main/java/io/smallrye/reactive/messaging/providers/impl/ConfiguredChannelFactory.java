@@ -30,6 +30,7 @@ import io.smallrye.reactive.messaging.EmitterConfiguration;
 import io.smallrye.reactive.messaging.EmitterFactory;
 import io.smallrye.reactive.messaging.MessageConverter;
 import io.smallrye.reactive.messaging.MessagePublisherProvider;
+import io.smallrye.reactive.messaging.PausableChannelConfiguration;
 import io.smallrye.reactive.messaging.PublisherDecorator;
 import io.smallrye.reactive.messaging.SubscriberDecorator;
 import io.smallrye.reactive.messaging.annotations.EmitterFactoryFor;
@@ -123,8 +124,14 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
 
         Multi<? extends Message<?>> publisher = MultiUtils.publisher(inboundConnector.getPublisher(config));
 
+        // The connector owns the default of graceful-shutdown (e.g. Kafka declares true),
+        // so resolve it once and expose the effective value to the decorators.
+        boolean gracefulShutdown = inboundConnector.isGracefulShutdownEnabled(config);
+        Config decoratorConfig = new OverrideConfig(config,
+                Map.of(PausableChannelConfiguration.GRACEFUL_SHUTDOWN_PROPERTY, c -> gracefulShutdown));
+
         for (PublisherDecorator decorator : getSortedInstances(publisherDecoratorInstance)) {
-            publisher = decorator.decorate(publisher, List.of(name), config);
+            publisher = decorator.decorate(publisher, List.of(name), decoratorConfig);
         }
 
         return publisher;

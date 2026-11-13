@@ -12,6 +12,20 @@ public interface PausableChannelConfiguration {
     String PAUSABLE_PROPERTY = "pausable";
 
     /**
+     * The name of the property to configure whether in-flight messages are tracked and drained on shutdown.
+     * <p>
+     * For incoming connector channels, the effective value is resolved by
+     * {@link io.smallrye.reactive.messaging.connector.InboundConnector#isGracefulShutdownEnabled(org.eclipse.microprofile.config.Config)},
+     * so the default can differ per connector.
+     */
+    String GRACEFUL_SHUTDOWN_PROPERTY = "graceful-shutdown";
+
+    /**
+     * The name of the property to configure the maximum time, in milliseconds, to wait for in-flight messages to drain.
+     */
+    String GRACEFUL_SHUTDOWN_DRAIN_TIMEOUT_PROPERTY = "graceful-shutdown.drain-timeout";
+
+    /**
      * The name of the property to configure whether the channel is initially paused.
      *
      * @deprecated use {@link #INITIALLY_PAUSED_PROPERTY} instead

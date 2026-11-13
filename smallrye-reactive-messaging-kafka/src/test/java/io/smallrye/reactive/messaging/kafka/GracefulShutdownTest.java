@@ -5,6 +5,8 @@ import static org.awaitility.Awaitility.await;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
@@ -23,6 +25,8 @@ import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.junit.jupiter.api.Test;
 
+import io.smallrye.reactive.messaging.ChannelRegistry;
+import io.smallrye.reactive.messaging.PausableChannel;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import io.smallrye.reactive.messaging.kafka.base.KafkaCompanionTestBase;
 import io.smallrye.reactive.messaging.kafka.base.KafkaMapBasedConfig;
@@ -101,6 +105,103 @@ public class GracefulShutdownTest extends KafkaCompanionTestBase {
                 .toList();
 
         assertThat(received).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+    }
+
+    @Test
+    public void testGracefulShutdownEnabledByDefault() {
+        String group = "test-graceful-shutdown-default";
+        addBeans(GatedConsumerBean.class);
+
+        // No graceful-shutdown property: Kafka declares it with a default of true.
+        // Remove the test-harness default (KafkaMapBasedConfig forces graceful-shutdown=false for incoming channels).
+        KafkaMapBasedConfig config = kafkaConfig("mp.messaging.incoming.data");
+        config.remove("mp.messaging.incoming.data.graceful-shutdown");
+        config.put("group.id", group);
+        config.put("topic", topic);
+        config.put("value.deserializer", IntegerDeserializer.class.getName());
+        config.put("enable.auto.commit", "false");
+        config.put("auto.offset.reset", "earliest");
+
+        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, i), 3);
+
+        runApplication(config);
+        GatedConsumerBean bean = get(GatedConsumerBean.class);
+        await().atMost(30, TimeUnit.SECONDS).until(() -> !bean.getReceived().isEmpty());
+
+        PausableChannel pausable = get(ChannelRegistry.class).getPausable("data");
+        CompletableFuture<Void> drain = pausable.pauseAndDrain().subscribeAsCompletionStage();
+
+        // In-flight messages are tracked, so the drain waits for them.
+        await().during(Duration.ofSeconds(1)).atMost(5, TimeUnit.SECONDS).until(() -> !drain.isDone());
+
+        bean.release();
+        await().atMost(10, TimeUnit.SECONDS).until(drain::isDone);
+
+        // Get a direct reference: the bean proxy is unusable once the container is closed.
+        List<Integer> received = bean.getReceived();
+        container.close();
+        container = null;
+
+        // Every drained message was processed and its offset committed on shutdown.
+        TopicPartition tp = new TopicPartition(topic, 0);
+        await().untilAsserted(() -> {
+            OffsetAndMetadata offset = companion.consumerGroups().offsets(group, tp);
+            assertThat(offset).isNotNull();
+            assertThat(offset.offset()).isEqualTo(received.size());
+        });
+    }
+
+    @Test
+    public void testGracefulShutdownCanBeDisabled() {
+        addBeans(GatedConsumerBean.class);
+
+        KafkaMapBasedConfig config = kafkaConfig("mp.messaging.incoming.data");
+        config.put("group.id", "test-graceful-shutdown-disabled");
+        config.put("topic", topic);
+        config.put("value.deserializer", IntegerDeserializer.class.getName());
+        config.put("auto.offset.reset", "earliest");
+        config.put("graceful-shutdown", false);
+
+        companion.produceIntegers().usingGenerator(i -> new ProducerRecord<>(topic, i), 3);
+
+        runApplication(config);
+        GatedConsumerBean bean = get(GatedConsumerBean.class);
+        await().atMost(30, TimeUnit.SECONDS).until(() -> !bean.getReceived().isEmpty());
+
+        PausableChannel pausable = get(ChannelRegistry.class).getPausable("data");
+        CompletableFuture<Void> drain = pausable.pauseAndDrain().subscribeAsCompletionStage();
+
+        // Not tracked: the drain returns right after pausing, although a message is still in flight.
+        await().atMost(5, TimeUnit.SECONDS).until(drain::isDone);
+        assertThat(bean.isReleased()).isFalse();
+
+        bean.release();
+    }
+
+    @ApplicationScoped
+    public static class GatedConsumerBean {
+
+        private final CompletableFuture<Void> gate = new CompletableFuture<>();
+        private final List<Integer> received = new CopyOnWriteArrayList<>();
+
+        @Incoming("data")
+        public CompletionStage<Void> consume(int payload) {
+            received.add(payload);
+            // Acked (and no longer in flight) only once the gate opens.
+            return gate;
+        }
+
+        public void release() {
+            gate.complete(null);
+        }
+
+        public boolean isReleased() {
+            return gate.isDone();
+        }
+
+        public List<Integer> getReceived() {
+            return received;
+        }
     }
 
     @ApplicationScoped
