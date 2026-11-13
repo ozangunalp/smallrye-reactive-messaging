@@ -1,8 +1,10 @@
 package io.smallrye.reactive.messaging.providers.impl;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -13,8 +15,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.BeforeDestroyed;
 import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 
+import org.eclipse.microprofile.config.Config;
 import org.jboss.logging.Logger;
 
 import io.smallrye.mutiny.TimeoutException;
@@ -32,12 +36,30 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
 
     private static final Logger log = Logger.getLogger(ChannelLifecycleManagerImpl.class);
 
+    /**
+     * Global property overriding the timeout of each shutdown phase, in milliseconds.
+     */
+    public static final String PHASE_TIMEOUT_PROPERTY = "smallrye.messaging.graceful-shutdown.phase-timeout";
+
+    /**
+     * Drain timeout assumed when no channel is pausable, the default of {@code graceful-shutdown.drain-timeout}.
+     */
+    static final Duration DEFAULT_DRAIN_TIMEOUT = Duration.ofSeconds(10);
+
+    /**
+     * Added to the longest drain timeout, for the connectors' prepare-close and close calls.
+     */
+    static final Duration PHASE_TIMEOUT_MARGIN = Duration.ofSeconds(20);
+
     @Inject
     @Any
     ChannelRegistry registry;
 
     @Inject
     ConnectorFactories connectorFactories;
+
+    @Inject
+    Instance<Config> configInstance;
 
     private final AtomicBoolean prepareCloseIncomingDone = new AtomicBoolean();
     private final AtomicBoolean prepareCloseOutgoingDone = new AtomicBoolean();
@@ -59,7 +81,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             if (!list.isEmpty()) {
                 Uni.join().all(list).usingConcurrencyOf(10)
                         .andCollectFailures()
-                        .await().atMost(Duration.ofSeconds(30));
+                        .await().atMost(phaseTimeout());
             }
         } catch (Exception e) {
             log.warn("Error preparing close of incoming channels", e);
@@ -82,7 +104,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             if (!list.isEmpty()) {
                 Uni.join().all(list).usingConcurrencyOf(10)
                         .andCollectFailures()
-                        .await().atMost(Duration.ofSeconds(30));
+                        .await().atMost(phaseTimeout());
             }
         } catch (Exception e) {
             log.warn("Error preparing close of outgoing channels", e);
@@ -105,7 +127,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             if (!list.isEmpty()) {
                 Uni.join().all(list).usingConcurrencyOf(10)
                         .andCollectFailures()
-                        .await().atMost(Duration.ofSeconds(30));
+                        .await().atMost(phaseTimeout());
             }
         } catch (Exception e) {
             log.warn("Error closing incoming channels", e);
@@ -119,7 +141,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             if (!list.isEmpty()) {
                 Uni.join().all(list).usingConcurrencyOf(10)
                         .andCollectFailures()
-                        .await().atMost(Duration.ofSeconds(30));
+                        .await().atMost(phaseTimeout());
             }
         } catch (Exception e) {
             log.warn("Error closing outgoing channels", e);
@@ -130,8 +152,8 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
 
     /**
      * CDI fallback: runs all three phases during CDI container destruction.
-     * Each phase is idempotent — if an external orchestrator (e.g. Quarkus service graph)
-     * already called individual phases, they are skipped here.
+     * Each phase runs at most once: if an external orchestrator (e.g. Quarkus service graph) already started a phase,
+     * it is skipped here. The guard is set when a phase starts, so a phase that is still running is skipped too.
      */
     public void onBeforeDestroyed(
             @Observes @Priority(40) @BeforeDestroyed(ApplicationScoped.class) Object event) {
@@ -181,6 +203,12 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
         }
 
         return forEachConnectorChannel(incomingConnectorChannels(channel), connector::closeIncoming)
+                // The channel is closed: forget it, so a channel created at runtime can be created again.
+                .invoke(() -> {
+                    if (registry instanceof InternalChannelRegistry internal) {
+                        internal.unregisterIncoming(channel);
+                    }
+                })
                 .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
     }
 
@@ -216,7 +244,43 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
         }
 
         return Uni.createFrom().completionStage(() -> connector.closeOutgoing(channel))
+                // The channel is closed: forget it, so a channel created at runtime can be created again.
+                .invoke(() -> {
+                    if (registry instanceof InternalChannelRegistry internal) {
+                        internal.unregisterOutgoing(channel);
+                    }
+                })
                 .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
+    }
+
+    /**
+     * The timeout of each shutdown phase: the {@value #PHASE_TIMEOUT_PROPERTY} property if set, otherwise the longest
+     * drain timeout of the pausable channels (channels are drained concurrently) plus a margin for the connector calls.
+     *
+     * @return the phase timeout
+     */
+    private Duration phaseTimeout() {
+        Optional<Integer> configured = Optional.empty();
+        if (configInstance != null && configInstance.isResolvable()) {
+            configured = configInstance.get().getOptionalValue(PHASE_TIMEOUT_PROPERTY, Integer.class);
+        }
+        return phaseTimeout(configured, registry.getPausableChannels().values());
+    }
+
+    /**
+     * @param configuredMillis the value of the {@value #PHASE_TIMEOUT_PROPERTY} property, if set
+     * @param pausables the pausable channels to drain
+     * @return the configured timeout, or the longest drain timeout plus {@link #PHASE_TIMEOUT_MARGIN}
+     */
+    static Duration phaseTimeout(Optional<Integer> configuredMillis, Collection<PausableChannel> pausables) {
+        if (configuredMillis.isPresent()) {
+            return Duration.ofMillis(configuredMillis.get());
+        }
+        Duration longestDrain = pausables.stream()
+                .map(PausableChannel::getDrainTimeout)
+                .max(Duration::compareTo)
+                .orElse(DEFAULT_DRAIN_TIMEOUT);
+        return longestDrain.plus(PHASE_TIMEOUT_MARGIN);
     }
 
     // --- Connector termination ---
@@ -234,7 +298,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             if (!list.isEmpty()) {
                 Uni.join().all(list).usingConcurrencyOf(10)
                         .andCollectFailures()
-                        .await().atMost(Duration.ofSeconds(30));
+                        .await().atMost(phaseTimeout());
             }
         } catch (Exception e) {
             log.warn("Error during connector termination", e);

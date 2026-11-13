@@ -249,8 +249,24 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
         return ConnectorConfig.create(prefix, new OverrideConfig(overall, prefixed), channel);
     }
 
+    /**
+     * Channels created at runtime must have a name not already in use: close the existing channel first.
+     */
+    private void checkNotRegistered(String channel) {
+        boolean registered;
+        if (registry instanceof InternalChannelRegistry internal) {
+            registered = internal.isRegistered(channel);
+        } else {
+            registered = !registry.getPublishers(channel).isEmpty() || !registry.getSubscribers(channel).isEmpty();
+        }
+        if (registered) {
+            throw ex.channelAlreadyRegistered(channel);
+        }
+    }
+
     @Override
     public <T> ChannelBinding<T, T> incoming(IncomingConnectorConfiguration configuration, Class<T> payloadType) {
+        checkNotRegistered(configuration.getChannel());
         ConnectorConfig cfg = wrapInConnectorConfig(ConnectorFactory.INCOMING_PREFIX, configuration);
         Flow.Publisher<? extends Message<?>> publisher = incoming(configuration.getChannel(),
                 configuration.getChannel(), cfg);
@@ -259,6 +275,7 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
 
     @Override
     public <T> T outgoing(OutgoingConnectorConfiguration configuration, Class<T> emitterType) {
+        checkNotRegistered(configuration.getChannel());
         ConnectorConfig cfg = wrapInConnectorConfig(ConnectorFactory.OUTGOING_PREFIX, configuration);
         return outgoing(configuration.getChannel(), cfg, emitterType);
     }
@@ -266,12 +283,14 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
     @Override
     public void outgoing(OutgoingConnectorConfiguration configuration,
             Flow.Publisher<? extends Message<?>> source) {
+        checkNotRegistered(configuration.getChannel());
         ConnectorConfig cfg = wrapInConnectorConfig(ConnectorFactory.OUTGOING_PREFIX, configuration);
         outgoing(configuration.getChannel(), cfg, source);
     }
 
     @Override
     public Flow.Subscriber<? extends Message<?>> outgoing(OutgoingConnectorConfiguration configuration) {
+        checkNotRegistered(configuration.getChannel());
         ConnectorConfig cfg = wrapInConnectorConfig(ConnectorFactory.OUTGOING_PREFIX, configuration);
         return outgoing(configuration.getChannel(), cfg);
     }

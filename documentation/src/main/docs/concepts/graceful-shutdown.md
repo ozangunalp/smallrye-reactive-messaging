@@ -112,8 +112,11 @@ In-flight messages complete their full processing chain — including outgoing s
 Outgoing channels (emitters) are drained later, after new external requests
 have been rejected, ensuring no new messages arrive while draining.
 
-Each phase has a global timeout of 30 seconds. If a channel fails within the timeout, the failure is logged and the shutdown continues with the remaining channels.
-All methods are idempotent.
+Each phase has a timeout: the longest drain timeout of the channels (they are drained concurrently) plus 20 seconds for the connector calls,
+which is 30 seconds with the default drain timeout.
+It can be set with the `smallrye.messaging.graceful-shutdown.phase-timeout` property (milliseconds).
+If a channel fails within the timeout, the failure is logged and the shutdown continues with the remaining channels.
+Each phase runs at most once: later calls return immediately.
 
 !!!note
     Drain guarantees apply to channels using `POST_PROCESSING` acknowledgment (the default).
@@ -132,7 +135,8 @@ it can call individual phases at the appropriate time:
 - `prepareCloseOutgoing()` — after HTTP closes, drain outgoing channels
 - `close()` — during ordered service teardown, close clients
 
-Each phase is idempotent — the CDI observer skips already-completed phases.
+Each phase runs at most once: the CDI observer skips the phases the orchestrator has already started,
+including a phase that is still running.
 
 ## Pausable Channels and Drain
 
@@ -154,3 +158,9 @@ This is useful for operations that require no in-flight processing, such as seek
 |---|---|---|---|
 | `graceful-shutdown` | boolean | connector-specific (`true` for Kafka incoming channels, `false` otherwise) | Enable graceful shutdown for the channel |
 | `graceful-shutdown.drain-timeout` | int (ms) | `10000` | Maximum time to wait for in-flight messages to drain |
+
+The timeout of each shutdown phase is a global property:
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `smallrye.messaging.graceful-shutdown.phase-timeout` | int (ms) | longest channel drain timeout + 20 seconds | Maximum time each shutdown phase waits for all channels |

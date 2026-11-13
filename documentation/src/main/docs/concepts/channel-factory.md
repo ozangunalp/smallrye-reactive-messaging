@@ -97,6 +97,10 @@ The outgoing message preserves the incoming message's metadata and ack/nack chai
 
 Connector configuration objects are created using generated builders, e.g. `KafkaConnectorIncomingConfiguration.builder("channel").topic("my-topic").build()`.
 
+Channel names must be unique: creating a channel with the name of a registered channel throws an `IllegalStateException`.
+Closing a channel with the `ChannelLifecycleManager` (`closeIncoming(channel)` or `closeOutgoing(channel)`) removes it from the `ChannelRegistry`,
+so a channel with the same name can be created again.
+
 ### ChannelBinding
 
 | Method | Description |

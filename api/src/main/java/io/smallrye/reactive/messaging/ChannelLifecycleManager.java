@@ -19,7 +19,8 @@ import io.smallrye.mutiny.Uni;
  * <p>
  * In CDI environments without an external orchestrator, a {@code @BeforeDestroyed(ApplicationScoped.class)}
  * observer runs all three phases sequentially.
- * When an external orchestrator calls individual phases, the CDI observer skips already-completed phases.
+ * Each phase runs at most once: when an external orchestrator calls individual phases, the CDI observer skips the
+ * phases that have already been started, including a phase that is still running.
  * <p>
  * <strong>Note:</strong> Drain guarantees apply to channels using {@code POST_PROCESSING} acknowledgment
  * (the default). Channels with {@code PRE_PROCESSING} acknowledge messages before processing completes,
@@ -34,7 +35,9 @@ public interface ChannelLifecycleManager {
      * This phase requires outgoing channels to remain operational — in-flight messages
      * may still be flowing through the processing chain to outgoing channels via ack chaining.
      * <p>
-     * This method is idempotent. Blocking, with a global timeout of 30 seconds.
+     * This method runs at most once: later calls return immediately, even while the first call is still running.
+     * Blocking, with a timeout derived from the longest channel drain timeout, configurable with the
+     * {@code smallrye.messaging.graceful-shutdown.phase-timeout} property (milliseconds).
      */
     void prepareCloseIncoming();
 
@@ -45,7 +48,9 @@ public interface ChannelLifecycleManager {
      * This should run after new external requests have been rejected, so no new messages
      * arrive via emitters while draining.
      * <p>
-     * This method is idempotent. Blocking, with a global timeout of 30 seconds.
+     * This method runs at most once: later calls return immediately, even while the first call is still running.
+     * Blocking, with a timeout derived from the longest channel drain timeout, configurable with the
+     * {@code smallrye.messaging.graceful-shutdown.phase-timeout} property (milliseconds).
      */
     void prepareCloseOutgoing();
 
@@ -56,7 +61,9 @@ public interface ChannelLifecycleManager {
      * This should run after both {@link #prepareCloseIncoming()} and {@link #prepareCloseOutgoing()}
      * have completed, typically during ordered container teardown.
      * <p>
-     * This method is idempotent. Blocking, with a global timeout of 30 seconds.
+     * This method runs at most once: later calls return immediately, even while the first call is still running.
+     * Blocking, with a timeout derived from the longest channel drain timeout, configurable with the
+     * {@code smallrye.messaging.graceful-shutdown.phase-timeout} property (milliseconds).
      */
     void close();
 

@@ -235,6 +235,56 @@ public class InternalChannelRegistry implements ChannelRegistry {
         return incomingConnectorChannels.getOrDefault(channel, List.of(channel));
     }
 
+    /**
+     * @param name the channel name
+     * @return {@code true} if a publisher, a subscriber or an emitter is registered under this name
+     */
+    public boolean isRegistered(String name) {
+        Objects.requireNonNull(name, msg.nameMustBeSet());
+        return publishers.containsKey(name) || subscribers.containsKey(name)
+                || emitters.values().stream().anyMatch(m -> m.containsKey(name));
+    }
+
+    /**
+     * Removes an incoming channel: its publishers, broadcast flag, connector name, emitters and pausable channel,
+     * including the indexed connector channels of a channel configured with {@code concurrency}.
+     *
+     * @param name the channel name, as registered
+     */
+    public void unregisterIncoming(String name) {
+        Objects.requireNonNull(name, msg.nameMustBeSet());
+        List<String> connectorChannels = incomingConnectorChannels.remove(name);
+        if (connectorChannels != null) {
+            connectorChannels.forEach(pausables::remove);
+        }
+        publishers.remove(name);
+        outgoing.remove(name);
+        incomingConnectors.remove(name);
+        emitters.values().forEach(m -> m.remove(name));
+        pausables.remove(name);
+    }
+
+    /**
+     * Removes an outgoing channel: its subscribers, merge flag, connector name, emitters and pausable channel.
+     * <p>
+     * An outgoing channel fed by an emitter or a source also registers its upstream publisher under the same name:
+     * it is removed too, unless the channel is also known as an incoming connector channel.
+     *
+     * @param name the channel name, as registered
+     */
+    public void unregisterOutgoing(String name) {
+        Objects.requireNonNull(name, msg.nameMustBeSet());
+        subscribers.remove(name);
+        incoming.remove(name);
+        outgoingConnectors.remove(name);
+        emitters.values().forEach(m -> m.remove(name));
+        if (!incomingConnectors.containsKey(name)) {
+            publishers.remove(name);
+            outgoing.remove(name);
+            pausables.remove(name);
+        }
+    }
+
     @Override
     public Map<String, String> getConnectorNames() {
         Map<String, String> all = new ConcurrentHashMap<>(incomingConnectors);
