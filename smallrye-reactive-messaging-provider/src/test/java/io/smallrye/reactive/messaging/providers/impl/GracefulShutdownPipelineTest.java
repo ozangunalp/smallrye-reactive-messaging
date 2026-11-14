@@ -34,8 +34,8 @@ import io.smallrye.reactive.messaging.ChannelFactory;
 import io.smallrye.reactive.messaging.ChannelLifecycleManager;
 import io.smallrye.reactive.messaging.WeldTestBaseWithoutTails;
 import io.smallrye.reactive.messaging.annotations.Blocking;
-import io.smallrye.reactive.messaging.connector.IncomingConnectorConfiguration;
 import io.smallrye.reactive.messaging.connector.InboundConnector;
+import io.smallrye.reactive.messaging.connector.IncomingConnectorConfiguration;
 import io.smallrye.reactive.messaging.connector.OutboundConnector;
 
 /**
