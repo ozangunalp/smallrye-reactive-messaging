@@ -8,10 +8,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
+import org.eclipse.microprofile.reactive.messaging.Channel;
+import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +45,38 @@ public class GracefulShutdownTest extends WeldTestBase {
         assertThat(countAfterShutdown).isGreaterThanOrEqualTo(countBeforeShutdown);
     }
 
+    @Test
+    void testGracefulShutdownDrainsEmitterBufferedMessages() throws PulsarClientException {
+        runApplication(new MapBasedConfig()
+                .with("mp.messaging.outgoing.out.connector", PulsarConnector.CONNECTOR_NAME)
+                .with("mp.messaging.outgoing.out.serviceUrl", serviceUrl)
+                .with("mp.messaging.outgoing.out.topic", topic)
+                .with("mp.messaging.outgoing.out.schema", "INT32")
+                .with("mp.messaging.outgoing.out.graceful-shutdown", true), EmitterProducerBean.class);
+
+        EmitterProducerBean bean = get(EmitterProducerBean.class);
+        for (int i = 0; i < 10; i++) {
+            bean.send(i);
+        }
+
+        // Shut down immediately: graceful shutdown completes the emitter and waits until every buffered message
+        // is acknowledged by the broker (sendAsync completed) before closing the producer.
+        container.close();
+        container = null;
+
+        // The messages are persisted on the topic: read them from the beginning after shutdown.
+        List<Integer> received = new CopyOnWriteArrayList<>();
+        receive(client.newConsumer(Schema.INT32)
+                .consumerName("test-consumer")
+                .subscriptionName("test-subscription")
+                .topic(topic)
+                .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
+                .subscribe(), 10, message -> received.add(message.getValue()));
+
+        await().atMost(30, TimeUnit.SECONDS)
+                .untilAsserted(() -> assertThat(received).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9));
+    }
+
     MapBasedConfig config() {
         return new MapBasedConfig()
                 .with("mp.messaging.incoming.data.connector", PulsarConnector.CONNECTOR_NAME)
@@ -50,6 +85,18 @@ public class GracefulShutdownTest extends WeldTestBase {
                 .with("mp.messaging.incoming.data.topic", topic)
                 .with("mp.messaging.incoming.data.schema", "INT32")
                 .with("mp.messaging.incoming.data.graceful-shutdown", true);
+    }
+
+    @ApplicationScoped
+    public static class EmitterProducerBean {
+
+        @Inject
+        @Channel("out")
+        Emitter<Integer> emitter;
+
+        public void send(int value) {
+            emitter.send(value);
+        }
     }
 
     @ApplicationScoped

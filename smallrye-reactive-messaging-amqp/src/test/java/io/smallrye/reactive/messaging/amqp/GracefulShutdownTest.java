@@ -10,7 +10,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
+import org.eclipse.microprofile.reactive.messaging.Channel;
+import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.weld.environment.se.Weld;
 import org.jboss.weld.environment.se.WeldContainer;
@@ -75,6 +78,57 @@ public class GracefulShutdownTest extends AmqpBrokerTestBase {
         // After shutdown, verify in-flight messages completed
         int countAfterShutdown = received.size();
         assertThat(countAfterShutdown).isGreaterThanOrEqualTo(countBeforeShutdown);
+    }
+
+    @Test
+    public void testGracefulShutdownDrainsEmitterBufferedMessages() {
+        String address = UUID.randomUUID().toString();
+
+        // Attach the consumer first: the broker doesn't keep messages sent to an address without a receiver.
+        List<Integer> received = new CopyOnWriteArrayList<>();
+        usage.consumeIntegers(address, received::add);
+
+        new MapBasedConfig()
+                .with("mp.messaging.outgoing.out.address", address)
+                .with("mp.messaging.outgoing.out.connector", AmqpConnector.CONNECTOR_NAME)
+                .with("mp.messaging.outgoing.out.host", host)
+                .with("mp.messaging.outgoing.out.port", port)
+                .with("amqp-username", username)
+                .with("amqp-password", password)
+                .with("mp.messaging.outgoing.out.tracing-enabled", false)
+                .with("mp.messaging.outgoing.out.graceful-shutdown", true)
+                .write();
+
+        Weld weld = new Weld();
+        weld.addBeanClass(EmitterProducerBean.class);
+        container = initializeContainer(weld);
+
+        await().until(() -> isAmqpConnectorReady(container));
+
+        EmitterProducerBean bean = container.select(EmitterProducerBean.class).get();
+        for (int i = 0; i < 10; i++) {
+            bean.send(i);
+        }
+
+        // Shut down immediately: graceful shutdown completes the emitter and waits until every buffered message
+        // is accepted by the broker (sendWithAck) before closing the channel.
+        container.shutdown();
+        container = null;
+
+        await().atMost(10, TimeUnit.SECONDS)
+                .untilAsserted(() -> assertThat(received).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9));
+    }
+
+    @ApplicationScoped
+    public static class EmitterProducerBean {
+
+        @Inject
+        @Channel("out")
+        Emitter<Integer> emitter;
+
+        public void send(int value) {
+            emitter.send(value);
+        }
     }
 
     @ApplicationScoped
