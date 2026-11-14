@@ -2,6 +2,7 @@ package io.smallrye.reactive.messaging.providers.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -26,14 +27,18 @@ import org.junit.jupiter.api.Test;
 
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.helpers.test.AssertSubscriber;
+import io.smallrye.reactive.messaging.ChannelFactory;
 import io.smallrye.reactive.messaging.ChannelLifecycleManager;
+import io.smallrye.reactive.messaging.ChannelRegistry;
 import io.smallrye.reactive.messaging.WeldTestBaseWithoutTails;
 import io.smallrye.reactive.messaging.connector.InboundConnector;
+import io.smallrye.reactive.messaging.connector.IncomingConnectorConfiguration;
 import io.smallrye.reactive.messaging.connector.OutboundConnector;
 
 /**
  * At the end of shutdown, only the connectors used by channels are terminated, each once: connectors without
  * channels may never have been created (their beans are created lazily) and must not be created just to be terminated.
+ * A connector whose runtime channels were all closed before shutdown is still terminated.
  */
 class ConnectorTerminationTest extends WeldTestBaseWithoutTails {
 
@@ -45,6 +50,8 @@ class ConnectorTerminationTest extends WeldTestBaseWithoutTails {
         UnusedConnector.TERMINATED.set(0);
         BothConnector.CREATED.set(0);
         BothConnector.TERMINATED.set(0);
+        RuntimeConnector.CREATED.set(0);
+        RuntimeConnector.TERMINATED.set(0);
     }
 
     @AfterEach
@@ -76,6 +83,29 @@ class ConnectorTerminationTest extends WeldTestBaseWithoutTails {
     }
 
     @Test
+    void connectorOfRuntimeChannelsClosedBeforeShutdownIsTerminated() {
+        addBeanClass(RuntimeConnector.class);
+        initialize();
+
+        ChannelFactory factory = get(ChannelFactory.class);
+        ChannelLifecycleManager lifecycle = get(ChannelLifecycleManager.class);
+        ChannelRegistry registry = get(ChannelRegistry.class);
+
+        // The only channels using the connector are created at runtime, then closed before shutdown.
+        factory.incoming(runtimeIncoming("runtime-in"), String.class).subscribe();
+        lifecycle.closeIncoming("runtime-in").await().atMost(Duration.ofSeconds(5));
+        assertThat(registry.getConnectorNames()).doesNotContainValue(RuntimeConnector.NAME);
+        assertThat(RuntimeConnector.CREATED).hasValue(1);
+        assertThat(RuntimeConnector.TERMINATED).hasValue(0);
+
+        lifecycle.prepareCloseIncoming();
+        lifecycle.prepareCloseOutgoing();
+        lifecycle.close();
+
+        assertThat(RuntimeConnector.TERMINATED).hasValue(1);
+    }
+
+    @Test
     void connectorsToTerminateSelectsUsedNamesAndTerminatesSharedBeansOnce() {
         InboundConnector in = new InOnly();
         InboundConnector unusedIn = new InOnly();
@@ -95,6 +125,23 @@ class ConnectorTerminationTest extends WeldTestBaseWithoutTails {
                 .containsExactlyInAnyOrder(in, out, both, splitIn, splitOut);
 
         assertThat(ChannelLifecycleManagerImpl.connectorsToTerminate(List.of(), inbound, outbound)).isEmpty();
+    }
+
+    private static IncomingConnectorConfiguration runtimeIncoming(String channel) {
+        var config = new MapBasedConfig(Map.of(
+                "connector", RuntimeConnector.NAME,
+                "channel-name", channel));
+        return new IncomingConnectorConfiguration() {
+            @Override
+            public Config config() {
+                return config;
+            }
+
+            @Override
+            public String getChannel() {
+                return channel;
+            }
+        };
     }
 
     static class InOnly implements InboundConnector {
@@ -191,6 +238,30 @@ class ConnectorTerminationTest extends WeldTestBaseWithoutTails {
         @Override
         public Flow.Subscriber<? extends Message<?>> getSubscriber(Config config) {
             return AssertSubscriber.create(Long.MAX_VALUE);
+        }
+
+        @Override
+        public CompletionStage<Void> terminate() {
+            TERMINATED.incrementAndGet();
+            return CompletableFuture.completedFuture(null);
+        }
+    }
+
+    @ApplicationScoped
+    @Connector(RuntimeConnector.NAME)
+    public static class RuntimeConnector implements InboundConnector {
+        static final String NAME = "smallrye-runtime";
+        static final AtomicInteger CREATED = new AtomicInteger();
+        static final AtomicInteger TERMINATED = new AtomicInteger();
+
+        @PostConstruct
+        void init() {
+            CREATED.incrementAndGet();
+        }
+
+        @Override
+        public Flow.Publisher<? extends Message<?>> getPublisher(Config config) {
+            return Multi.createFrom().items("r").map(Message::of);
         }
 
         @Override

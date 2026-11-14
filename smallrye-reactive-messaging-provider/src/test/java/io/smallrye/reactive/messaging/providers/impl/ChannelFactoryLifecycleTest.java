@@ -26,7 +26,7 @@ import io.smallrye.reactive.messaging.providers.connectors.MyDummyConnector;
 
 /**
  * Channels created at runtime must have unique names, and closing them removes them from the registry, so they can be
- * created again. Also covers the derivation of the shutdown phase timeout.
+ * created again. Also covers the derivation of the shutdown phase timeout, including the waves of channels.
  */
 class ChannelFactoryLifecycleTest extends WeldTestBaseWithoutTails {
 
@@ -105,20 +105,36 @@ class ChannelFactoryLifecycleTest extends WeldTestBaseWithoutTails {
 
     @Test
     void phaseTimeoutIsTheLongestDrainTimeoutPlusAMargin() {
-        assertThat(ChannelLifecycleManagerImpl.phaseTimeout(Optional.empty(), List.of()))
+        assertThat(ChannelLifecycleManagerImpl.phaseTimeout(Optional.empty(), List.of(), 0))
                 .isEqualTo(ChannelLifecycleManagerImpl.DEFAULT_DRAIN_TIMEOUT
                         .plus(ChannelLifecycleManagerImpl.PHASE_TIMEOUT_MARGIN));
 
         Duration timeout = ChannelLifecycleManagerImpl.phaseTimeout(Optional.empty(),
-                List.of(pausable(Duration.ofSeconds(5)), pausable(Duration.ofSeconds(25))));
+                List.of(pausable(Duration.ofSeconds(5)), pausable(Duration.ofSeconds(25))), 2);
         assertThat(timeout).isGreaterThan(Duration.ofSeconds(25))
                 .isEqualTo(Duration.ofSeconds(25).plus(ChannelLifecycleManagerImpl.PHASE_TIMEOUT_MARGIN));
     }
 
     @Test
+    void phaseTimeoutCoversEveryWaveOfChannels() {
+        List<PausableChannel> pausables = List.of(pausable(Duration.ofSeconds(10)));
+        Duration margin = ChannelLifecycleManagerImpl.PHASE_TIMEOUT_MARGIN;
+        int concurrency = ChannelLifecycleManagerImpl.PHASE_CONCURRENCY;
+
+        // Up to PHASE_CONCURRENCY calls run in a single wave.
+        assertThat(ChannelLifecycleManagerImpl.phaseTimeout(Optional.empty(), pausables, concurrency))
+                .isEqualTo(Duration.ofSeconds(10).plus(margin));
+        // One more call needs a second wave, and so on.
+        assertThat(ChannelLifecycleManagerImpl.phaseTimeout(Optional.empty(), pausables, concurrency + 1))
+                .isEqualTo(Duration.ofSeconds(20).plus(margin));
+        assertThat(ChannelLifecycleManagerImpl.phaseTimeout(Optional.empty(), pausables, 3 * concurrency))
+                .isEqualTo(Duration.ofSeconds(30).plus(margin));
+    }
+
+    @Test
     void phaseTimeoutPropertyWins() {
         Duration timeout = ChannelLifecycleManagerImpl.phaseTimeout(Optional.of(5000),
-                List.of(pausable(Duration.ofSeconds(25))));
+                List.of(pausable(Duration.ofSeconds(25))), 100);
         assertThat(timeout).isEqualTo(Duration.ofSeconds(5));
     }
 

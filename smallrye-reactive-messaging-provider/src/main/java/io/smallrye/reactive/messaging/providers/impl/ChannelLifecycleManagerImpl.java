@@ -9,8 +9,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -55,6 +57,11 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
      */
     static final Duration PHASE_TIMEOUT_MARGIN = Duration.ofSeconds(20);
 
+    /**
+     * The number of channels (or connectors) handled at the same time in each shutdown phase.
+     */
+    static final int PHASE_CONCURRENCY = 10;
+
     @Inject
     @Any
     ChannelRegistry registry;
@@ -69,6 +76,10 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
     private final AtomicBoolean prepareCloseOutgoingDone = new AtomicBoolean();
     private final AtomicBoolean closeDone = new AtomicBoolean();
 
+    // The connectors of the channels closed one by one (e.g. runtime channels closed before shutdown): closing a channel
+    // unregisters it, so the registry no longer knows these connectors when shutdown terminates the connectors in use.
+    private final Set<String> closedChannelConnectors = ConcurrentHashMap.newKeySet();
+
     // --- Prepare close incoming channels ---
 
     @Override
@@ -77,19 +88,10 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             return;
         }
 
-        try {
-            List<Uni<Void>> list = registry.getIncomingNames().stream()
-                    .map(channel -> prepareCloseIncoming(channel)
-                            .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
-                    .toList();
-            if (!list.isEmpty()) {
-                Uni.join().all(list).usingConcurrencyOf(10)
-                        .andCollectFailures()
-                        .await().atMost(phaseTimeout());
-            }
-        } catch (Exception e) {
-            log.warn("Error preparing close of incoming channels", e);
-        }
+        runPhase("Error preparing close of incoming channels", () -> registry.getIncomingNames().stream()
+                .map(channel -> prepareCloseIncoming(channel)
+                        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
+                .toList());
     }
 
     // --- Prepare close outgoing channels ---
@@ -100,19 +102,10 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             return;
         }
 
-        try {
-            List<Uni<Void>> list = registry.getOutgoingNames().stream()
-                    .map(channel -> prepareCloseOutgoing(channel)
-                            .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
-                    .toList();
-            if (!list.isEmpty()) {
-                Uni.join().all(list).usingConcurrencyOf(10)
-                        .andCollectFailures()
-                        .await().atMost(phaseTimeout());
-            }
-        } catch (Exception e) {
-            log.warn("Error preparing close of outgoing channels", e);
-        }
+        runPhase("Error preparing close of outgoing channels", () -> registry.getOutgoingNames().stream()
+                .map(channel -> prepareCloseOutgoing(channel)
+                        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
+                .toList());
     }
 
     // --- Close clients + terminate connectors ---
@@ -123,37 +116,21 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             return;
         }
 
-        // Taken before the channels are closed, which unregisters them: the connectors actually in use.
-        // Connectors without channels may never have been created (their beans are created lazily), so they are left alone.
+        // Taken before the channels are closed, which unregisters them: the connectors actually in use, including those
+        // of channels already closed one by one. Connectors without channels may never have been created (their beans
+        // are created lazily), so they are left alone.
         Set<String> usedConnectors = new LinkedHashSet<>(registry.getConnectorNames().values());
+        usedConnectors.addAll(closedChannelConnectors);
 
-        try {
-            List<Uni<Void>> list = registry.getIncomingNames().stream()
-                    .map(channel -> closeIncoming(channel)
-                            .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
-                    .toList();
-            if (!list.isEmpty()) {
-                Uni.join().all(list).usingConcurrencyOf(10)
-                        .andCollectFailures()
-                        .await().atMost(phaseTimeout());
-            }
-        } catch (Exception e) {
-            log.warn("Error closing incoming channels", e);
-        }
+        runPhase("Error closing incoming channels", () -> registry.getIncomingNames().stream()
+                .map(channel -> closeIncoming(channel)
+                        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
+                .toList());
 
-        try {
-            List<Uni<Void>> list = registry.getOutgoingNames().stream()
-                    .map(channel -> closeOutgoing(channel)
-                            .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
-                    .toList();
-            if (!list.isEmpty()) {
-                Uni.join().all(list).usingConcurrencyOf(10)
-                        .andCollectFailures()
-                        .await().atMost(phaseTimeout());
-            }
-        } catch (Exception e) {
-            log.warn("Error closing outgoing channels", e);
-        }
+        runPhase("Error closing outgoing channels", () -> registry.getOutgoingNames().stream()
+                .map(channel -> closeOutgoing(channel)
+                        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
+                .toList());
 
         terminateConnectors(usedConnectors);
     }
@@ -210,6 +187,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             return Uni.createFrom().voidItem();
         }
 
+        closedChannelConnectors.add(connectorName);
         return forEachConnectorChannel(incomingConnectorChannels(channel), connector::closeIncoming)
                 // The channel is closed: forget it, so a channel created at runtime can be created again.
                 .invoke(() -> {
@@ -251,6 +229,7 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
             return Uni.createFrom().voidItem();
         }
 
+        closedChannelConnectors.add(connectorName);
         return Uni.createFrom().completionStage(() -> connector.closeOutgoing(channel))
                 // The channel is closed: forget it, so a channel created at runtime can be created again.
                 .invoke(() -> {
@@ -262,25 +241,49 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
     }
 
     /**
-     * The timeout of each shutdown phase: the {@value #PHASE_TIMEOUT_PROPERTY} property if set, otherwise the longest
-     * drain timeout of the pausable channels (channels are drained concurrently) plus a margin for the connector calls.
+     * Runs the calls of a shutdown phase, {@link #PHASE_CONCURRENCY} at a time, and waits for them, at most for the
+     * {@linkplain #phaseTimeout(int) phase timeout}. Failures are logged, so the next phases still run.
+     */
+    private void runPhase(String errorMessage, Supplier<List<Uni<Void>>> calls) {
+        try {
+            List<Uni<Void>> list = calls.get();
+            if (!list.isEmpty()) {
+                Uni.join().all(list).usingConcurrencyOf(PHASE_CONCURRENCY)
+                        .andCollectFailures()
+                        .await().atMost(phaseTimeout(list.size()));
+            }
+        } catch (Exception e) {
+            log.warn(errorMessage, e);
+        }
+    }
+
+    /**
+     * The timeout of a shutdown phase: the {@value #PHASE_TIMEOUT_PROPERTY} property if set, otherwise computed from
+     * the drain timeouts of the pausable channels, see {@link #phaseTimeout(Optional, Collection, int)}.
      *
+     * @param calls the number of calls in the phase
      * @return the phase timeout
      */
-    private Duration phaseTimeout() {
+    private Duration phaseTimeout(int calls) {
         Optional<Integer> configured = Optional.empty();
         if (configInstance != null && configInstance.isResolvable()) {
             configured = configInstance.get().getOptionalValue(PHASE_TIMEOUT_PROPERTY, Integer.class);
         }
-        return phaseTimeout(configured, registry.getPausableChannels().values());
+        return phaseTimeout(configured, registry.getPausableChannels().values(), calls);
     }
 
     /**
+     * The calls of a phase run {@link #PHASE_CONCURRENCY} at a time, so they run in {@code ceil(calls / 10)} waves, and
+     * each wave can take up to the longest drain timeout. The default timeout covers all the waves, plus a margin for the
+     * connector calls. It is only an upper bound: a phase ends as soon as its calls complete.
+     *
      * @param configuredMillis the value of the {@value #PHASE_TIMEOUT_PROPERTY} property, if set
      * @param pausables the pausable channels to drain
-     * @return the configured timeout, or the longest drain timeout plus {@link #PHASE_TIMEOUT_MARGIN}
+     * @param calls the number of calls in the phase
+     * @return the configured timeout, or the longest drain timeout times the number of waves, plus
+     *         {@link #PHASE_TIMEOUT_MARGIN}
      */
-    static Duration phaseTimeout(Optional<Integer> configuredMillis, Collection<PausableChannel> pausables) {
+    static Duration phaseTimeout(Optional<Integer> configuredMillis, Collection<PausableChannel> pausables, int calls) {
         if (configuredMillis.isPresent()) {
             return Duration.ofMillis(configuredMillis.get());
         }
@@ -288,7 +291,8 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
                 .map(PausableChannel::getDrainTimeout)
                 .max(Duration::compareTo)
                 .orElse(DEFAULT_DRAIN_TIMEOUT);
-        return longestDrain.plus(PHASE_TIMEOUT_MARGIN);
+        int waves = Math.max(1, (calls + PHASE_CONCURRENCY - 1) / PHASE_CONCURRENCY);
+        return longestDrain.multipliedBy(waves).plus(PHASE_TIMEOUT_MARGIN);
     }
 
     // --- Connector termination ---
@@ -297,19 +301,10 @@ public class ChannelLifecycleManagerImpl implements ChannelLifecycleManager {
         List<ConnectorLifecycle> connectors = connectorsToTerminate(usedConnectors,
                 connectorFactories.getInboundConnectors(), connectorFactories.getOutboundConnectors());
 
-        try {
-            List<Uni<Void>> list = connectors.stream()
-                    .map(c -> Uni.createFrom().completionStage(c::terminate)
-                            .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
-                    .toList();
-            if (!list.isEmpty()) {
-                Uni.join().all(list).usingConcurrencyOf(10)
-                        .andCollectFailures()
-                        .await().atMost(phaseTimeout());
-            }
-        } catch (Exception e) {
-            log.warn("Error during connector termination", e);
-        }
+        runPhase("Error during connector termination", () -> connectors.stream()
+                .map(c -> Uni.createFrom().completionStage(c::terminate)
+                        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool()))
+                .toList());
     }
 
     /**

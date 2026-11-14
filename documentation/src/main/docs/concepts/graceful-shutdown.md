@@ -112,8 +112,10 @@ In-flight messages complete their full processing chain — including outgoing s
 Outgoing channels (emitters) are drained later, after new external requests
 have been rejected, ensuring no new messages arrive while draining.
 
-Each phase has a timeout: the longest drain timeout of the channels (they are drained concurrently) plus 20 seconds for the connector calls,
-which is 30 seconds with the default drain timeout.
+Each phase handles 10 channels at a time, and has a timeout:
+the longest drain timeout of the channels, once for every 10 channels, plus 20 seconds for the connector calls.
+With the default drain timeout, that is 30 seconds for up to 10 channels, 40 seconds for up to 20, and so on.
+The timeout is an upper bound: a phase ends as soon as its channels are done.
 It can be set with the `smallrye.messaging.graceful-shutdown.phase-timeout` property (milliseconds).
 If a channel fails within the timeout, the failure is logged and the shutdown continues with the remaining channels.
 Each phase runs at most once: later calls return immediately.
@@ -179,8 +181,9 @@ What happens to the remaining messages:
 
 Timeouts:
 
-- **Phase timeout:** each phase drains at most 10 channels at a time, but the default phase timeout only accounts for
-  the longest drain timeout. With many channels slow to drain, set `smallrye.messaging.graceful-shutdown.phase-timeout`.
+- **Phase timeout:** the default phase timeout assumes every wave of 10 channels may take the longest drain timeout.
+  If the connectors' prepare-close or close calls are slow, or the computed timeout is too long for your platform's
+  shutdown deadline, set `smallrye.messaging.graceful-shutdown.phase-timeout`.
 - **Kafka:** graceful shutdown is enabled by default for Kafka incoming channels, so the shutdown can take up to the drain timeout.
   Kafka request-reply emitters wait up to `reply.timeout` for pending replies; AMQP request-reply emitters complete
   pending replies immediately.
@@ -205,4 +208,4 @@ The timeout of each shutdown phase is a global property:
 
 | Property | Type | Default | Description |
 |---|---|---|---|
-| `smallrye.messaging.graceful-shutdown.phase-timeout` | int (ms) | longest channel drain timeout + 20 seconds | Maximum time each shutdown phase waits for all channels |
+| `smallrye.messaging.graceful-shutdown.phase-timeout` | int (ms) | longest channel drain timeout × ⌈channels / 10⌉ + 20 seconds | Maximum time each shutdown phase waits for all channels |
