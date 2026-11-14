@@ -152,6 +152,48 @@ The `PausableChannel` interface provides `pauseAndDrain()` for programmatic use 
 
 This is useful for operations that require no in-flight processing, such as seeking a Kafka consumer to a new position.
 
+## Limitations
+
+What the drain waits for:
+
+- **Acknowledgment strategy:** in-flight messages are tracked through their acknowledgment.
+  With `PRE_PROCESSING` or `NONE` acknowledgment, messages leave the in-flight count before they are processed,
+  so the drain does not wait for their processing.
+- **Messages never acknowledged:** the drain waits until the drain timeout, logs a warning (`SRMSG00246`)
+  with the number of messages still in flight, and the shutdown continues.
+- **Broadcast channels:** a message is counted once, so the drain completes when the first subscriber acknowledges it,
+  even if another subscriber is still processing it.
+- **Only connector channels are paused and drained.** Channels between methods are drained indirectly,
+  when the acknowledgment of the processed messages reaches the incoming connector message.
+
+What happens to the remaining messages:
+
+- **Messages received but not yet delivered** when an incoming channel is paused are neither processed nor acknowledged.
+  Brokers that redeliver unacknowledged messages (Kafka, AMQP, Pulsar, RabbitMQ with manual acknowledgment)
+  deliver them again after a restart.
+  With connectors that acknowledge on receipt, such as RabbitMQ with `auto-acknowledgement=true` or MQTT with QoS 0,
+  they are lost.
+- **What "sent" means depends on the connector.** Kafka, AMQP and Pulsar acknowledge an outgoing message once the broker accepted it.
+  RabbitMQ does so only with `publish-confirms=true`: otherwise the drain only guarantees that every message was written
+  before the channel closes.
+
+Timeouts:
+
+- **Phase timeout:** each phase drains at most 10 channels at a time, but the default phase timeout only accounts for
+  the longest drain timeout. With many channels slow to drain, set `smallrye.messaging.graceful-shutdown.phase-timeout`.
+- **Kafka:** graceful shutdown is enabled by default for Kafka incoming channels, so the shutdown can take up to the drain timeout.
+  Kafka request-reply emitters wait up to `reply.timeout` for pending replies; AMQP request-reply emitters complete
+  pending replies immediately.
+
+Message types and runtime channels:
+
+- **Connector message types:** tracking rebuilds messages, which lose their connector-specific type.
+  Methods consuming `KafkaRecord`, `IncomingKafkaRecord`, `KafkaRecordBatch` or `IncomingKafkaRecordBatch` get it restored.
+  Other connector message types, such as `AmqpMessage`, `IncomingRabbitMQMessage` or `PulsarIncomingMessage`, are not restored:
+  consume `Message<T>` and read the connector metadata instead (see [Custom Message types](model.md)).
+- **Channels created at runtime** with the [Channel Factory](channel-factory.md) don't support `concurrency`.
+  If a connector fails to close such a channel, its name stays registered until the application restarts.
+
 ## Configuration Reference
 
 | Property | Type | Default | Description |
