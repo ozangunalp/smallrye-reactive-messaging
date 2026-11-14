@@ -17,15 +17,15 @@ import io.smallrye.mutiny.helpers.test.AssertSubscriber;
 import io.smallrye.mutiny.operators.multi.processors.UnicastProcessor;
 import io.smallrye.reactive.messaging.MessagePublisherProvider;
 import io.smallrye.reactive.messaging.PausableChannel;
+import io.smallrye.reactive.messaging.providers.impl.BuilderConfig;
 import io.smallrye.reactive.messaging.providers.impl.InternalChannelRegistry;
-import io.smallrye.reactive.messaging.providers.impl.MapBasedConfig;
 
 /**
  * Drain semantics of {@link PausableChannelDecorator.PauserChannel} for channels fed by emitters.
  */
 class PauserChannelDrainTest {
 
-    private static final MapBasedConfig GRACEFUL = new MapBasedConfig(Map.of("graceful-shutdown", "true"));
+    private static final BuilderConfig GRACEFUL = new BuilderConfig(Map.of("graceful-shutdown", "true"));
 
     private InternalChannelRegistry registry;
     private PausableChannelDecorator decorator;
@@ -128,7 +128,7 @@ class PauserChannelDrainTest {
         registry.register("out", StubEmitter.class, emitter);
 
         AssertSubscriber<Message<?>> sink = subscribe(decorator.decorate(Multi.createFrom().publisher(source),
-                List.of("out"), new MapBasedConfig(Map.of("pausable", "true"))));
+                List.of("out"), new BuilderConfig(Map.of("pausable", "true"))));
         source.onNext(Message.of("a"));
         sink.request(1);
 
@@ -165,7 +165,7 @@ class PauserChannelDrainTest {
     void channelIsNotPausableByDefaultWithoutGracefulShutdown() {
         Multi<Message<String>> source = Multi.createFrom().empty();
 
-        assertThat(decorator.decorate(source, List.of("plain"), new MapBasedConfig(Map.of()))).isSameAs(source);
+        assertThat(decorator.decorate(source, List.of("plain"), new BuilderConfig(Map.of()))).isSameAs(source);
         assertThat(registry.getPausable("plain")).isNull();
 
         decorator.decorate(source, List.of("graceful"), GRACEFUL);

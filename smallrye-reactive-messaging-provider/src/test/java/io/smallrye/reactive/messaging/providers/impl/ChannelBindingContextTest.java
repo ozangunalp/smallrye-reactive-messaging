@@ -45,7 +45,7 @@ class ChannelBindingContextTest extends WeldTestBaseWithoutTails {
     private static final List<Integer> PAYLOADS = List.of(1, 2, 3);
 
     private IncomingConnectorConfiguration incomingConfig(String channel) {
-        var config = new MapBasedConfig(Map.of(
+        var config = new BuilderConfig(Map.of(
                 "connector", ContextEmittingConnector.NAME,
                 "channel-name", channel));
         return new IncomingConnectorConfiguration() {

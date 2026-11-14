@@ -128,7 +128,7 @@ class ConnectorTerminationTest extends WeldTestBaseWithoutTails {
     }
 
     private static IncomingConnectorConfiguration runtimeIncoming(String channel) {
-        var config = new MapBasedConfig(Map.of(
+        var config = new BuilderConfig(Map.of(
                 "connector", RuntimeConnector.NAME,
                 "channel-name", channel));
         return new IncomingConnectorConfiguration() {

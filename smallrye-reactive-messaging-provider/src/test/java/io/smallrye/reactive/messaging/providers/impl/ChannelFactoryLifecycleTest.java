@@ -161,7 +161,7 @@ class ChannelFactoryLifecycleTest extends WeldTestBaseWithoutTails {
     }
 
     private static IncomingConnectorConfiguration incomingConfig(String channel) {
-        var config = new MapBasedConfig(Map.of(
+        var config = new BuilderConfig(Map.of(
                 "connector", "dummy",
                 "channel-name", channel));
         return new IncomingConnectorConfiguration() {
@@ -178,7 +178,7 @@ class ChannelFactoryLifecycleTest extends WeldTestBaseWithoutTails {
     }
 
     private static OutgoingConnectorConfiguration outgoingConfig(String channel) {
-        var config = new MapBasedConfig(Map.of(
+        var config = new BuilderConfig(Map.of(
                 "connector", "dummy",
                 "channel-name", channel));
         return new OutgoingConnectorConfiguration() {

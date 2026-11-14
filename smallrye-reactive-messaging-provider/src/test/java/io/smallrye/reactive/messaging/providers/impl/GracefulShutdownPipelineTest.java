@@ -183,7 +183,7 @@ class GracefulShutdownPipelineTest extends WeldTestBaseWithoutTails {
     }
 
     private static IncomingConnectorConfiguration incomingConfig(String channel) {
-        MapBasedConfig config = new MapBasedConfig(Map.of(
+        BuilderConfig config = new BuilderConfig(Map.of(
                 "connector", PipelineConnector.NAME,
                 "channel-name", channel,
                 "graceful-shutdown", "true"));

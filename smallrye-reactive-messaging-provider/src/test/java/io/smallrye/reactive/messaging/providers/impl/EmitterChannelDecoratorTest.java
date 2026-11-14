@@ -84,7 +84,7 @@ class EmitterChannelDecoratorTest extends WeldTestBaseWithoutTails {
 
     @Test
     void isConnectorChannelHonoursTheEmitterChannelAttribute() {
-        Config config = new MapBasedConfig(Map.of("connector", "smallrye-dummy"));
+        Config config = new BuilderConfig(Map.of("connector", "smallrye-dummy"));
 
         assertThat(PublisherDecorator.isConnectorChannel(null)).isFalse();
         assertThat(PublisherDecorator.isConnectorChannel(config)).isTrue();
@@ -101,7 +101,7 @@ class EmitterChannelDecoratorTest extends WeldTestBaseWithoutTails {
     }
 
     private static IncomingConnectorConfiguration incomingConfig(String channel) {
-        var config = new MapBasedConfig(Map.of(
+        var config = new BuilderConfig(Map.of(
                 "connector", "dummy",
                 "channel-name", channel));
         return new IncomingConnectorConfiguration() {
@@ -118,7 +118,7 @@ class EmitterChannelDecoratorTest extends WeldTestBaseWithoutTails {
     }
 
     private static OutgoingConnectorConfiguration outgoingConfig(String channel) {
-        var config = new MapBasedConfig(Map.of(
+        var config = new BuilderConfig(Map.of(
                 "connector", "dummy",
                 "channel-name", channel));
         return new OutgoingConnectorConfiguration() {

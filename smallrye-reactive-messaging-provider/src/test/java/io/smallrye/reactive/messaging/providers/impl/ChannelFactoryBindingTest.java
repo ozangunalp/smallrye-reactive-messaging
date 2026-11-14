@@ -42,7 +42,7 @@ class ChannelFactoryBindingTest extends WeldTestBaseWithoutTails {
                 "connector", "dummy",
                 "channel-name", channel));
         values.putAll(extra);
-        var config = new MapBasedConfig(values);
+        var config = new BuilderConfig(values);
         return new IncomingConnectorConfiguration() {
             @Override
             public org.eclipse.microprofile.config.Config config() {
@@ -57,7 +57,7 @@ class ChannelFactoryBindingTest extends WeldTestBaseWithoutTails {
     }
 
     private OutgoingConnectorConfiguration outgoingConfig(String channel) {
-        var config = new MapBasedConfig(Map.of(
+        var config = new BuilderConfig(Map.of(
                 "connector", "dummy",
                 "channel-name", channel));
         return new OutgoingConnectorConfiguration() {
