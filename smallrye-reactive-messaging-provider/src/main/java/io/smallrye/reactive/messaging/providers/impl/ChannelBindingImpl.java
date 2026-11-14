@@ -2,6 +2,7 @@ package io.smallrye.reactive.messaging.providers.impl;
 
 import static io.smallrye.reactive.messaging.providers.i18n.ProviderLogging.log;
 
+import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Flow;
 import java.util.function.BiConsumer;
@@ -14,39 +15,54 @@ import org.eclipse.microprofile.reactive.messaging.Metadata;
 
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
-import io.smallrye.mutiny.infrastructure.Infrastructure;
 import io.smallrye.mutiny.subscription.Cancellable;
 import io.smallrye.reactive.messaging.ChannelBinding;
 import io.smallrye.reactive.messaging.ChannelFactory;
 import io.smallrye.reactive.messaging.connector.OutgoingConnectorConfiguration;
+import io.smallrye.reactive.messaging.providers.AbstractMediator;
+import io.smallrye.reactive.messaging.providers.connectors.WorkerPoolRegistry;
+import io.smallrye.reactive.messaging.providers.locals.LocalContextMetadata;
+import io.vertx.mutiny.core.Context;
+import io.vertx.mutiny.core.Vertx;
 
 class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
 
     private final Multi<? extends Message<?>> upstream;
     private final ChannelFactory channelFactory;
+    // The Reactive Messaging worker pools, used by blocking() and blocking(concurrency).
+    private final WorkerPoolRegistry workerPoolRegistry;
+    private final boolean blocking;
+    // The executor of blocking(Executor), null for the Reactive Messaging worker pool.
     private final Executor executor;
     private final int concurrency;
     private final BiFunction<I, Metadata, Uni<O>> processor;
 
-    ChannelBindingImpl(Multi<? extends Message<?>> upstream, ChannelFactory channelFactory) {
-        this(upstream, channelFactory, null, 1, null);
+    ChannelBindingImpl(Multi<? extends Message<?>> upstream, ChannelFactory channelFactory,
+            WorkerPoolRegistry workerPoolRegistry) {
+        this(upstream, channelFactory, workerPoolRegistry, false, null, 1, null);
     }
 
     private ChannelBindingImpl(Multi<? extends Message<?>> upstream, ChannelFactory channelFactory,
-            Executor executor, int concurrency, BiFunction<I, Metadata, Uni<O>> processor) {
+            WorkerPoolRegistry workerPoolRegistry, boolean blocking, Executor executor, int concurrency,
+            BiFunction<I, Metadata, Uni<O>> processor) {
         this.upstream = upstream;
         this.channelFactory = channelFactory;
+        this.workerPoolRegistry = workerPoolRegistry;
+        this.blocking = blocking;
         this.executor = executor;
         this.concurrency = concurrency;
         this.processor = processor;
     }
 
+    @SuppressWarnings("unchecked")
     private Multi<? extends Message<?>> applyPipeline() {
-        if (processor == null) {
-            // Nothing to process: only move the delivery to the executor, if any.
-            return executor != null ? upstream.emitOn(executor) : upstream;
+        if (processor == null && !blocking) {
+            return upstream;
         }
-        Function<Message<?>, Multi<? extends Message<?>>> processMessage = this::processMessage;
+        // A blocking binding without steps still moves each message to the worker and back, like the steps would.
+        BiFunction<I, Metadata, Uni<O>> steps = processor != null ? processor
+                : (payload, metadata) -> Uni.createFrom().item((O) payload);
+        Function<Message<?>, Multi<? extends Message<?>>> processMessage = msg -> processMessage(msg, steps);
         return upstream.plug(m -> {
             if (concurrency > 1) {
                 return m.onItem().transformToMulti(processMessage).merge(concurrency);
@@ -57,20 +73,43 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
     }
 
     @SuppressWarnings("unchecked")
-    private Multi<? extends Message<?>> processMessage(Message<?> msg) {
+    private Multi<? extends Message<?>> processMessage(Message<?> msg, BiFunction<I, Metadata, Uni<O>> steps) {
         I payload = (I) msg.getPayload();
-        // Deferred so the processor runs when the inner stream is subscribed, not while the upstream emits.
-        // Exceptions thrown by the processor become failures and nack the message.
-        Uni<O> processing = Uni.createFrom().deferred(() -> processor.apply(payload, msg.getMetadata()));
-        if (executor != null) {
-            // Each message is processed on the executor, so merge(concurrency) runs up to `concurrency` at once,
-            // and concatenate() keeps them sequential and ordered.
-            processing = processing.runSubscriptionOn(executor);
+        // Deferred so the steps run when the inner stream is subscribed, not while the upstream emits.
+        // Exceptions thrown by the steps become failures and nack the message.
+        Uni<O> processing;
+        if (blocking) {
+            processing = runBlocking(msg, AbstractMediator.skipContextPropagation(() -> steps.apply(payload,
+                    msg.getMetadata())));
+        } else {
+            processing = Uni.createFrom().deferred(() -> steps.apply(payload, msg.getMetadata()));
         }
         return Multi.createFrom().uni(processing.onItem().transform(msg::withPayload))
                 .onFailure().recoverWithMulti(e -> Multi.createFrom()
                         .completionStage(msg.nack(e))
                         .onItem().transformToMultiAndConcatenate(v -> Multi.createFrom().empty()));
+    }
+
+    /**
+     * Runs the steps of a message on a worker thread, as {@code @Blocking} does: the steps see the message's Vert.x
+     * context as the current context, and the result is delivered back on that context, so the sink and the
+     * acknowledgement run there too.
+     * Each message is processed on its own, so merge(concurrency) runs up to {@code concurrency} at once, and
+     * concatenate() keeps them sequential and ordered.
+     */
+    private Uni<O> runBlocking(Message<?> msg, Uni<O> work) {
+        // Captured here, on the thread delivering the message, like the current context of a @Blocking method.
+        Context msgContext = msg.getMetadata().get(LocalContextMetadata.class)
+                .map(m -> Context.newInstance(m.context()))
+                .orElseGet(Vertx::currentContext);
+        // Deferred so a rejection (no Vert.x instance, or the worker pools being shut down) nacks the message.
+        return Uni.createFrom().deferred(() -> {
+            if (executor != null) {
+                return workerPoolRegistry.executeWork(msgContext, work, executor);
+            }
+            // Ordered only when sequential: with concurrency, messages sharing a context must not wait for each other.
+            return workerPoolRegistry.executeWork(msgContext, work, null, concurrency == 1);
+        });
     }
 
     /**
@@ -87,7 +126,8 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
             composed = (payload, metadata) -> processor.apply(payload, metadata)
                     .onItem().transformToUni(result -> step.apply(result, metadata));
         }
-        return new ChannelBindingImpl<>(upstream, channelFactory, executor, concurrency, composed);
+        return new ChannelBindingImpl<>(upstream, channelFactory, workerPoolRegistry, blocking, executor, concurrency,
+                composed);
     }
 
     private ChannelBindingImpl<I, Void> processAndConsume(BiFunction<O, Metadata, Uni<Void>> consumer) {
@@ -96,12 +136,13 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
 
     @Override
     public ChannelBinding<I, O> blocking() {
-        return blocking(Infrastructure.getDefaultExecutor(), 1);
+        return blocking(1);
     }
 
     @Override
     public ChannelBinding<I, O> blocking(int concurrency) {
-        return blocking(Infrastructure.getDefaultExecutor(), concurrency);
+        return new ChannelBindingImpl<>(upstream, channelFactory, workerPoolRegistry, true, null, concurrency,
+                processor);
     }
 
     @Override
@@ -111,7 +152,9 @@ class ChannelBindingImpl<I, O> implements ChannelBinding<I, O> {
 
     @Override
     public ChannelBinding<I, O> blocking(Executor executor, int concurrency) {
-        return new ChannelBindingImpl<>(upstream, channelFactory, executor, concurrency, processor);
+        Objects.requireNonNull(executor, "executor");
+        return new ChannelBindingImpl<>(upstream, channelFactory, workerPoolRegistry, true, executor, concurrency,
+                processor);
     }
 
     @Override

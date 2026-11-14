@@ -41,6 +41,7 @@ import io.smallrye.reactive.messaging.connector.IncomingConnectorConfiguration;
 import io.smallrye.reactive.messaging.connector.OutboundConnector;
 import io.smallrye.reactive.messaging.connector.OutgoingConnectorConfiguration;
 import io.smallrye.reactive.messaging.providers.DefaultEmitterConfiguration;
+import io.smallrye.reactive.messaging.providers.connectors.WorkerPoolRegistry;
 import io.smallrye.reactive.messaging.providers.extension.CompositePausableChannel;
 import io.smallrye.reactive.messaging.providers.helpers.ConverterUtils;
 import io.smallrye.reactive.messaging.providers.helpers.MultiUtils;
@@ -70,6 +71,9 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
     @Inject
     @Any
     Instance<MessageConverter> converters;
+
+    @Inject
+    WorkerPoolRegistry workerPoolRegistry;
 
     // CDI requirement for normal scoped beans
     protected ConfiguredChannelFactory() {
@@ -299,12 +303,12 @@ public class ConfiguredChannelFactory implements ChannelFactory, ChannelRegistar
     public <T> ChannelBinding<T, T> bind(Flow.Publisher<? extends Message<?>> publisher, Class<T> payloadType) {
         Multi<? extends Message<?>> multi = MultiUtils.publisher(publisher);
         Multi<? extends Message<?>> converted = ConverterUtils.convert(multi, converters, payloadType);
-        return new ChannelBindingImpl<>(converted, this);
+        return new ChannelBindingImpl<>(converted, this, workerPoolRegistry);
     }
 
     @Override
     public ChannelBinding<?, ?> bind(Flow.Publisher<? extends Message<?>> publisher) {
-        return new ChannelBindingImpl<>(MultiUtils.publisher(publisher), this);
+        return new ChannelBindingImpl<>(MultiUtils.publisher(publisher), this, workerPoolRegistry);
     }
 
     // --- Startup ---

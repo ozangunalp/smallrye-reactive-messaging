@@ -70,6 +70,11 @@ Dispatch processing to worker threads, optionally with concurrency:
 {{ insert('channelfactory/ChannelBindingExample.java', 'blocking') }}
 ```
 
+`blocking()` and `blocking(concurrency)` run on the Reactive Messaging worker pool, like `@Blocking` methods.
+With any `blocking` variant, the steps see the message's Vert.x context as the current context
+(so context locals, such as tracing data, are visible),
+and the rest of the pipeline, including the acknowledgement, continues on that context.
+
 ### Processing Pipeline
 
 Transform messages and forward them to an outgoing channel:
@@ -112,7 +117,7 @@ so a channel with the same name can be created again.
 | `subscribe(BiConsumer)` | Process payload and metadata, auto-ack |
 | `subscribeAsync(Function<T, Uni<Void>>)` | Async processing, ack on completion |
 | `subscribeAsync(BiFunction<T, Metadata, Uni<Void>>)` | Async processing with metadata, ack on completion |
-| `blocking()` / `blocking(concurrency)` | Dispatch to worker threads |
+| `blocking()` / `blocking(concurrency)` | Dispatch to the Reactive Messaging worker pool, like `@Blocking` |
 | `blocking(executor)` / `blocking(executor, concurrency)` | Dispatch to custom executor |
 | `process(Function)` / `processAsync(Function)` | Add a transformation step, applied to the output of the previous one |
 | `to(subscriber)` / `to(OutgoingConnectorConfiguration)` | Forward to outgoing channel |

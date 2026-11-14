@@ -168,7 +168,8 @@ class ChannelBindingKafkaTest extends KafkaCompanionTestBase {
 
         await().atMost(Duration.ofSeconds(30))
                 .untilAsserted(() -> assertThat(received).hasSize(5));
-        assertThat(threadNames).allSatisfy(name -> assertThat(name).doesNotContain("vert.x"));
+        // Like @Blocking, blocking() runs on the Vert.x worker pool, not on the event loop or the polling thread.
+        assertThat(threadNames).allSatisfy(name -> assertThat(name).contains("vert.x-worker-thread"));
         cancellable.cancel();
     }
 

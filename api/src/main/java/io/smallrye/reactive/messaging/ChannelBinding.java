@@ -91,8 +91,10 @@ public interface ChannelBinding<I, O> {
     Cancellable subscribeAsync(BiFunction<O, Metadata, Uni<Void>> consumer);
 
     /**
-     * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on a worker
-     * thread pool.
+     * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on the
+     * Reactive Messaging worker pool, as {@code @Blocking} methods do.
+     * The steps see the message's Vert.x context as the current context, and the rest of the pipeline, including the
+     * acknowledgement, continues on that context.
      * Messages are processed sequentially.
      * Use this when the consumer performs blocking operations.
      *
@@ -101,8 +103,11 @@ public interface ChannelBinding<I, O> {
     ChannelBinding<I, O> blocking();
 
     /**
-     * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on a worker
-     * thread pool, processing up to {@code concurrency} messages in parallel.
+     * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on the
+     * Reactive Messaging worker pool, as {@code @Blocking(ordered = false)} methods do, processing up to
+     * {@code concurrency} messages in parallel.
+     * The steps see the message's Vert.x context as the current context, and the rest of the pipeline, including the
+     * acknowledgement, continues on that context.
      * Use this when the consumer performs blocking operations.
      *
      * @param concurrency the maximum number of messages processed concurrently
@@ -113,6 +118,8 @@ public interface ChannelBinding<I, O> {
     /**
      * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on the given
      * executor.
+     * The steps see the message's Vert.x context as the current context, and the rest of the pipeline, including the
+     * acknowledgement, continues on that context.
      * Messages are processed sequentially.
      * Use this when the consumer performs blocking operations.
      *
@@ -124,6 +131,8 @@ public interface ChannelBinding<I, O> {
     /**
      * Returns a new {@link ChannelBinding} that runs the processing steps and the consumer of each message on the given
      * executor, processing up to {@code concurrency} messages in parallel.
+     * The steps see the message's Vert.x context as the current context, and the rest of the pipeline, including the
+     * acknowledgement, continues on that context.
      * Use this when the consumer performs blocking operations.
      *
      * @param executor the executor to run the consumer on
